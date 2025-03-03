@@ -63,6 +63,23 @@ let targetTiltZ = 0; // Target pitch (up/down tilt)
 let currentTiltX = 0;
 let currentTiltZ = 0;
 
+// Update the bounds constants to be more restrictive
+const DESKTOP_BOUNDS = {
+    x: 6,    // Reduced from 8 to 6
+    y: 7
+};
+
+const MOBILE_BOUNDS = {
+    portrait: {
+        x: 4,    // Reduced from 5 to 4
+        y: 7
+    },
+    landscape: {
+        x: 5,    // Reduced from 7 to 5
+        y: 5
+    }
+};
+
 function init() {
     // Create start screen handler
     document.getElementById('startButton').addEventListener('click', startGame);
@@ -497,11 +514,12 @@ function enemyShoot(enemy) {
 }
 
 function spawnEnemy() {
+    const bounds = getPlayableBounds();
     const enemy = createTieFighter();
-    enemy.rotation.y = Math.PI;
-    enemy.position.x = Math.random() * 16 - 8;
-    enemy.position.y = Math.random() * 6 + 1;
-    enemy.position.z = -180;  // Spawn much further back
+    // Spawn within visible bounds
+    enemy.position.x = (Math.random() * (bounds.x * 1.8)) - (bounds.x * 0.9);
+    enemy.position.y = Math.random() * bounds.y;
+    enemy.position.z = -180;
     enemies.push(enemy);
     scene.add(enemy);
 }
@@ -776,27 +794,28 @@ function updatePlayer() {
     // Update movement and tilting
     if (gameActive) {
         const speed = 0.15;
+        const bounds = getPlayableBounds();
         
         // Reset target tilts
         targetTiltZ = 0;
         targetTiltX = 0;
 
-        // Update position and set target tilts
-        if (moveLeft && player.position.x > -8) {
+        // Update position and set target tilts with new bounds
+        if (moveLeft && player.position.x > -bounds.x) {
             player.position.x -= speed;
-            targetTiltZ = TILT_ANGLE; // Tilt left
+            targetTiltZ = TILT_ANGLE;
         }
-        if (moveRight && player.position.x < 8) {
+        if (moveRight && player.position.x < bounds.x) {
             player.position.x += speed;
-            targetTiltZ = -TILT_ANGLE; // Tilt right
+            targetTiltZ = -TILT_ANGLE;
         }
-        if (moveUp && player.position.y < 7) {
+        if (moveUp && player.position.y < bounds.y) {
             player.position.y += speed;
-            targetTiltX = -TILT_ANGLE / 2; // Tilt up (less extreme)
+            targetTiltX = -TILT_ANGLE / 2;
         }
         if (moveDown && player.position.y > 0) {
             player.position.y -= speed;
-            targetTiltX = TILT_ANGLE / 2; // Tilt down (less extreme)
+            targetTiltX = TILT_ANGLE / 2;
         }
 
         // Smoothly interpolate current tilt to target tilt
@@ -881,8 +900,12 @@ function updateGameObjects() {
         spawnEnemy();
     }
     
+    // Keep enemies within bounds
+    const bounds = getPlayableBounds();
     for(let i = enemies.length - 1; i >= 0; i--) {
-        enemies[i].position.z += 0.56;  // Reduced from 0.7 to 0.56 (20% slower)
+        // Clamp enemy positions to bounds
+        enemies[i].position.x = Math.max(-bounds.x * 0.9, Math.min(bounds.x * 0.9, enemies[i].position.x));
+        enemies[i].position.y = Math.max(0, Math.min(bounds.y, enemies[i].position.y));
         
         // Random chance to shoot when in range (increased from 0.01 to 0.015)
         if(enemies[i].position.z > -100 && Math.random() < 0.015) {
@@ -1029,6 +1052,16 @@ function updateGameObjects() {
             healthPowerups.splice(i, 1);
         }
     }
+
+    // Keep powerups within bounds
+    const keepWithinBounds = (powerup) => {
+        powerup.position.x = Math.max(-bounds.x * 0.9, Math.min(bounds.x * 0.9, powerup.position.x));
+        powerup.position.y = Math.max(1, Math.min(bounds.y, powerup.position.y));
+    };
+
+    shieldPowerups.forEach(keepWithinBounds);
+    weaponPowerups.forEach(keepWithinBounds);
+    healthPowerups.forEach(keepWithinBounds);
 }
 
 function createJetStream(position, parentObject) {
@@ -1344,9 +1377,10 @@ window.addEventListener('orientationchange', () => {
 });
 
 function getRandomPlayablePosition() {
+    const bounds = getPlayableBounds();
     return {
-        x: Math.random() * 14 - 7,    // Between -7 and 7 (slightly inside edges)
-        y: Math.random() * 5 + 1,     // Between 1 and 6 (playable height)
+        x: (Math.random() * (bounds.x * 1.8)) - (bounds.x * 0.9), // Stay within 90% of bounds
+        y: Math.random() * (bounds.y - 1) + 1,  // Between 1 and bounds.y
         z: -180
     };
 }
@@ -1763,4 +1797,14 @@ function updateUI() {
     // Add difficulty indicator to score display
     const difficultyStars = '★'.repeat(difficultyLevel) + '☆'.repeat(MAX_DIFFICULTY - difficultyLevel);
     document.getElementById('scoreValue').textContent = `${score} (${difficultyStars})`;
+}
+
+// Add this function to get current bounds
+function getPlayableBounds() {
+    if (!isMobile) return DESKTOP_BOUNDS;
+    
+    // Check if we're in portrait mode
+    return window.innerHeight > window.innerWidth ? 
+        MOBILE_BOUNDS.portrait : 
+        MOBILE_BOUNDS.landscape;
 } 
