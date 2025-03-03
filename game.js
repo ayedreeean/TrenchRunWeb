@@ -1260,22 +1260,26 @@ function restartGame() {
 init(); 
 
 function setupMobileControls() {
-    // Remove the isMobile check since we'll control visibility with CSS
+    if (!isMobile) return;
+
+    // Make controls visible
     const joystickZone = document.getElementById('joystickZone');
     const fireButton = document.getElementById('fireButton');
-
-    // Setup joystick
+    
+    // Setup joystick with fixed position
     joystick = nipplejs.create({
         zone: joystickZone,
         mode: 'static',
         position: { 
-            left: '100px', 
-            bottom: '100px' 
+            left: '80px',  // Adjusted position
+            bottom: '80px' // Adjusted position
         },
-        color: 'white',
+        color: 'rgba(255, 255, 255, 0.5)',  // Semi-transparent white
         size: 120,
+        dynamicPage: true,
         multitouch: true,
-        dynamicPage: true
+        maxNumberOfNipples: 1,  // Ensure only one joystick
+        dataOnly: false  // Show the joystick UI
     });
 
     // Joystick move handler with improved sensitivity
