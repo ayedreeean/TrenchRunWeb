@@ -124,9 +124,7 @@ function setupGame() {
     window.addEventListener('resize', onWindowResize, false);
 
     // Setup mobile controls
-    if (isMobile) {
-        setupMobileControls();
-    }
+    setupMobileControls();
 
     // Reset game variables
     score = 0;
@@ -1265,6 +1263,7 @@ function setupMobileControls() {
     const joystickZone = document.getElementById('joystickZone');
     const fireButton = document.getElementById('fireButton');
     
+    // Force display block for mobile controls
     joystickZone.style.display = 'block';
     fireButton.style.display = 'block';
 
