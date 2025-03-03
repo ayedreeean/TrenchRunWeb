@@ -32,6 +32,27 @@ let gameStartTime = Date.now();
 let joystick = null;
 let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 let gameStarted = false;
+let shieldActive = false;
+let shieldTime = 0;
+let shieldPowerups = [];
+let shieldMesh = null;
+let shieldBarContainer = null;
+let shieldBarFill = null;
+let shieldEffect = null;  // To store reference to the shield effect mesh
+const SHIELD_DURATION = 1200; // 20 seconds at 60fps
+let weaponUpgradeActive = false;
+let weaponUpgradeTime = 0;
+let weaponPowerups = [];
+let weaponBarContainer = null;
+let weaponBarFill = null;
+const WEAPON_UPGRADE_DURATION = 1500; // 25 seconds at 60fps
+let weaponLevel = 1; // Base level is 1 beam, each upgrade adds 1
+let healthPowerups = [];
+let difficultyLevel = 1;
+let timeSinceStart = 0;
+const DIFFICULTY_INCREASE_INTERVAL = 3600; // Increase difficulty every minute (60fps * 60s)
+const MAX_DIFFICULTY = 5;
+const BASE_SPAWN_RATE = 0.01;
 
 function init() {
     // Create start screen handler
@@ -75,6 +96,10 @@ function setupGame() {
     player = createPlayer();
     player.position.y = 2;
     scene.add(player);
+    
+    // Add shield mesh to player
+    shieldMesh = createPlayerShield();
+    player.add(shieldMesh);
     
     // Create trench
     createTrench();
@@ -237,13 +262,49 @@ function shootLaser() {
     if (!gameActive) return;
     
     shotsFired++;
-    const laserGeometry = new THREE.BoxGeometry(0.2, 0.2, 4.0);  // Increased from 2.5 to 4.0
-    const laserMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-    const laser = new THREE.Mesh(laserGeometry, laserMaterial);
-    laser.position.copy(player.position);
-    laser.position.z -= 2;  // Adjusted to account for longer laser
-    lasers.push(laser);
-    scene.add(laser);
+    
+    const createSingleLaser = (xOffset) => {
+        // Always use green color, just vary the size based on upgrade
+        const laserGeometry = weaponUpgradeActive ? 
+            new THREE.BoxGeometry(0.3, 0.3, 5.0) :  // Slightly larger when upgraded
+            new THREE.BoxGeometry(0.2, 0.2, 4.0);
+        
+        const laserMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x00ff00,  // Always green
+            transparent: weaponUpgradeActive,
+            opacity: weaponUpgradeActive ? 0.9 : 1
+        });
+        
+        const laser = new THREE.Mesh(laserGeometry, laserMaterial);
+        laser.position.copy(player.position);
+        laser.position.x += xOffset;
+        laser.position.z -= weaponUpgradeActive ? 2.5 : 2;
+        laser.userData.upgraded = weaponUpgradeActive;
+        lasers.push(laser);
+        scene.add(laser);
+    };
+
+    // Calculate offsets based on weapon level with wider spacing
+    switch(weaponLevel) {
+        case 1:
+            createSingleLaser(0); // Single center beam
+            break;
+        case 2:
+            createSingleLaser(-0.75); // Left beam (wider gap)
+            createSingleLaser(0.75);  // Right beam
+            break;
+        case 3:
+            createSingleLaser(-1.5);   // Left beam
+            createSingleLaser(0);      // Center beam
+            createSingleLaser(1.5);    // Right beam
+            break;
+        case 4:
+            createSingleLaser(-2.25);  // Far left beam
+            createSingleLaser(-0.75);  // Inner left beam
+            createSingleLaser(0.75);   // Inner right beam
+            createSingleLaser(2.25);   // Far right beam
+            break;
+    }
 }
 
 function createPlayer() {
@@ -634,6 +695,13 @@ function updateCameraShake() {
 }
 
 function playerHit(damage = 20) {
+    if (shieldActive) {
+        // Shield absorbs the hit
+        createExplosion(player.position.clone());
+        shakeCamera();
+        return;
+    }
+    
     if (invulnerableTime <= 0) {
         playerHealth = Math.max(0, playerHealth - damage);
         updateHealthBar();
@@ -706,10 +774,41 @@ function updatePlayer() {
         if (moveUp && player.position.y < 7) player.position.y += speed;
         if (moveDown && player.position.y > 0) player.position.y -= speed;
     }
+
+    // Update shield
+    if (shieldActive) {
+        shieldTime--;
+        shieldEffect.material.uniforms.time.value += 0.016;
+        updateShieldBar();
+        
+        if (shieldTime <= 0) {
+            shieldActive = false;
+            shieldEffect.visible = false;
+            shieldBarContainer.visible = false;
+        }
+    }
+
+    // Update weapon upgrade
+    if (weaponUpgradeActive) {
+        weaponUpgradeTime--;
+        if (weaponUpgradeTime <= 0) {
+            weaponUpgradeActive = false;
+            weaponLevel = 1; // Reset to base level when upgrade expires
+        }
+    }
 }
 
 function updateGameObjects() {
     if (!gameActive) return;  // Don't update if game is over
+    
+    // Update game time and difficulty
+    timeSinceStart++;
+    if (timeSinceStart % DIFFICULTY_INCREASE_INTERVAL === 0) {
+        difficultyLevel = Math.min(difficultyLevel + 1, MAX_DIFFICULTY);
+    }
+    
+    // Calculate current spawn rate based on difficulty
+    const currentSpawnRate = BASE_SPAWN_RATE * (1 + (difficultyLevel - 1) * 0.3);
     
     // Update player lasers
     for(let i = lasers.length - 1; i >= 0; i--) {
@@ -737,8 +836,10 @@ function updateGameObjects() {
         }
     }
     
-    // Update enemies with slower speed and reduced spawn rate
-    if(Math.random() < 0.01) spawnEnemy();  // Reduced from 0.015 to 0.01 (33% slower spawn rate)
+    // Update enemies with scaled spawn rate
+    if(Math.random() < currentSpawnRate) {
+        spawnEnemy();
+    }
     
     for(let i = enemies.length - 1; i >= 0; i--) {
         enemies[i].position.z += 0.56;  // Reduced from 0.7 to 0.56 (20% slower)
@@ -756,11 +857,24 @@ function updateGameObjects() {
         
         // Check collision with player
         if(checkCollision(enemies[i], player)) {
-            playerHit(35);  // Collision does 35 damage
-            createExplosion(enemies[i].position.clone());
-            scene.remove(enemies[i]);
-            enemies.splice(i, 1);
-            continue;
+            if (shieldActive) {
+                // If shielded, destroy the TIE fighter and count it as a kill
+                createExplosion(enemies[i].position.clone());
+                scene.remove(enemies[i]);
+                enemies.splice(i, 1);
+                score += 100;
+                tiesFightersDestroyed++;
+                document.getElementById('scoreValue').textContent = score;
+                shakeCamera();
+                continue;
+            } else {
+                // Normal collision damage when not shielded
+                playerHit(35);  // Collision does 35 damage
+                createExplosion(enemies[i].position.clone());
+                scene.remove(enemies[i]);
+                enemies.splice(i, 1);
+                continue;
+            }
         }
 
         // Add back laser hit detection
@@ -777,6 +891,102 @@ function updateGameObjects() {
                 document.getElementById('scoreValue').textContent = score;
                 break;
             }
+        }
+    }
+
+    // Spawn shield powerups occasionally (reduced frequency)
+    if (Math.random() < 0.0006) { // Reduced from 0.0012 to 0.0006 (50% less frequent)
+        const shieldPowerup = createShieldPowerup();
+        shieldPowerups.push(shieldPowerup);
+        scene.add(shieldPowerup);
+    }
+    
+    // Update shield powerups
+    for (let i = shieldPowerups.length - 1; i >= 0; i--) {
+        shieldPowerups[i].position.z += 0.56;
+        shieldPowerups[i].rotation.y += shieldPowerups[i].userData.rotationSpeed;
+        
+        // Update glow effect
+        shieldPowerups[i].userData.time += 0.016;
+        shieldPowerups[i].userData.glowMaterial.uniforms.time.value = shieldPowerups[i].userData.time;
+        
+        // Remove if too far
+        if (shieldPowerups[i].position.z > 10) {
+            scene.remove(shieldPowerups[i]);
+            shieldPowerups.splice(i, 1);
+            continue;
+        }
+        
+        // Check collision with player using more forgiving check
+        if (checkPowerupCollision(shieldPowerups[i], player)) {
+            createPickupAnimation(shieldPowerups[i].position.clone(), 0x00ffff); // Cyan color for shield
+            activateShield();
+            scene.remove(shieldPowerups[i]);
+            shieldPowerups.splice(i, 1);
+        }
+    }
+
+    // Spawn weapon powerups occasionally (reduced frequency)
+    if (Math.random() < 0.0006) { // Reduced from 0.0012 to 0.0006 (50% less frequent)
+        const weaponPowerup = createWeaponPowerup();
+        weaponPowerups.push(weaponPowerup);
+        scene.add(weaponPowerup);
+    }
+    
+    // Update weapon powerups
+    for (let i = weaponPowerups.length - 1; i >= 0; i--) {
+        weaponPowerups[i].position.z += 0.56;
+        weaponPowerups[i].rotation.y += weaponPowerups[i].userData.rotationSpeed;
+        
+        // Update glow effect
+        weaponPowerups[i].userData.time += 0.016;
+        weaponPowerups[i].userData.glowMaterial.uniforms.time.value = weaponPowerups[i].userData.time;
+        
+        // Remove if too far
+        if (weaponPowerups[i].position.z > 10) {
+            scene.remove(weaponPowerups[i]);
+            weaponPowerups.splice(i, 1);
+            continue;
+        }
+        
+        // Check collision with player using more forgiving check
+        if (checkPowerupCollision(weaponPowerups[i], player)) {
+            createPickupAnimation(weaponPowerups[i].position.clone(), 0xff0000); // Red color for weapon
+            activateWeaponUpgrade();
+            scene.remove(weaponPowerups[i]);
+            weaponPowerups.splice(i, 1);
+        }
+    }
+
+    // Spawn health powerups occasionally (same rate as other powerups)
+    if (Math.random() < 0.0006) {
+        const healthPowerup = createHealthPowerup();
+        healthPowerups.push(healthPowerup);
+        scene.add(healthPowerup);
+    }
+    
+    // Update health powerups
+    for (let i = healthPowerups.length - 1; i >= 0; i--) {
+        healthPowerups[i].position.z += 0.56;
+        healthPowerups[i].rotation.y += healthPowerups[i].userData.rotationSpeed;
+        
+        // Update glow effect
+        healthPowerups[i].userData.time += 0.016;
+        healthPowerups[i].userData.glowMaterial.uniforms.time.value = healthPowerups[i].userData.time;
+        
+        // Remove if too far
+        if (healthPowerups[i].position.z > 10) {
+            scene.remove(healthPowerups[i]);
+            healthPowerups.splice(i, 1);
+            continue;
+        }
+        
+        // Check collision with player
+        if (checkPowerupCollision(healthPowerups[i], player)) {
+            createPickupAnimation(healthPowerups[i].position.clone(), 0xff3366); // Pink color for health
+            activateHealthPowerup();
+            scene.remove(healthPowerups[i]);
+            healthPowerups.splice(i, 1);
         }
     }
 }
@@ -965,6 +1175,37 @@ function restartGame() {
     // Reset UI
     document.getElementById('scoreValue').textContent = '0';
     updateHealthBar();
+
+    shieldActive = false;
+    shieldTime = 0;
+    if (shieldEffect) shieldEffect.visible = false;
+    if (shieldBarContainer) shieldBarContainer.visible = false;
+    
+    // Remove the HTML shield bar references
+    const shieldBar = document.getElementById('shield-bar');
+    if (shieldBar) {
+        shieldBar.remove();
+    }
+    
+    // Clear shield powerups
+    shieldPowerups.forEach(powerup => scene.remove(powerup));
+    shieldPowerups = [];
+
+    weaponUpgradeActive = false;
+    weaponUpgradeTime = 0;
+    weaponLevel = 1; // Reset weapon level
+    
+    // Clear weapon powerups
+    weaponPowerups.forEach(powerup => scene.remove(powerup));
+    weaponPowerups = [];
+
+    // Clear health powerups
+    healthPowerups.forEach(powerup => scene.remove(powerup));
+    healthPowerups = [];
+
+    // Reset difficulty
+    difficultyLevel = 1;
+    timeSinceStart = 0;
 }
 
 // Start the game
@@ -1053,4 +1294,421 @@ function requestFullScreen(element) {
 // Add orientation change handler
 window.addEventListener('orientationchange', () => {
     setTimeout(onWindowResize, 100);
-}); 
+});
+
+function createShieldPowerup() {
+    const group = new THREE.Group();
+
+    // Create hexagonal frame
+    const hexGeometry = new THREE.CircleGeometry(0.5, 6);
+    const hexMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide
+    });
+    const hexFrame = new THREE.Mesh(hexGeometry, hexMaterial);
+    group.add(hexFrame);
+
+    // Create inner hexagon
+    const innerHexGeometry = new THREE.CircleGeometry(0.35, 6);
+    const innerHexMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.4,
+        side: THREE.DoubleSide
+    });
+    const innerHex = new THREE.Mesh(innerHexGeometry, innerHexMaterial);
+    innerHex.position.z = 0.01; // Slightly offset to avoid z-fighting
+    group.add(innerHex);
+
+    // Add pulsing glow effect
+    const glowGeometry = new THREE.CircleGeometry(0.6, 6);
+    const glowMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            time: { value: 0 },
+            color: { value: new THREE.Color(0x00ffff) }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            uniform float time;
+            varying vec2 vUv;
+            void main() {
+                float dist = distance(vUv, vec2(0.5));
+                float pulse = sin(time * 3.0) * 0.15 + 0.85;
+                float alpha = (1.0 - dist) * 0.5 * pulse;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    glow.position.z = -0.01;
+    group.add(glow);
+
+    // Add rotation animation
+    group.userData.rotationSpeed = 0.02;
+    group.userData.glowMaterial = glowMaterial;
+    group.userData.time = 0;
+
+    // Random position
+    group.position.x = Math.random() * 16 - 8;
+    group.position.y = Math.random() * 6 + 1;
+    group.position.z = -180;
+
+    return group;
+}
+
+function createPlayerShield() {
+    const group = new THREE.Group();
+
+    // Create the shield sphere
+    const geometry = new THREE.SphereGeometry(1.5, 32, 32);
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            time: { value: 0 },
+            color: { value: new THREE.Color(0x00ffff) }
+        },
+        vertexShader: `
+            varying vec3 vNormal;
+            void main() {
+                vNormal = normal;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            uniform float time;
+            varying vec3 vNormal;
+            void main() {
+                float intensity = pow(0.7 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
+                float shield = sin(time * 3.0) * 0.15 + 0.85;
+                gl_FragColor = vec4(color, intensity * shield * 0.7);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    shieldEffect = new THREE.Mesh(geometry, material);  // Store reference
+    shieldEffect.visible = false;
+    group.add(shieldEffect);
+
+    // Create shield bar container
+    const barGeometry = new THREE.BoxGeometry(2, 0.1, 0.1);
+    const barMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
+    shieldBarContainer = new THREE.Mesh(barGeometry, barMaterial);
+    shieldBarContainer.position.y = -1.5;
+    shieldBarContainer.visible = false;
+    group.add(shieldBarContainer);
+
+    // Create shield bar fill
+    const fillGeometry = new THREE.BoxGeometry(2, 0.1, 0.1);
+    const fillMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+    shieldBarFill = new THREE.Mesh(fillGeometry, fillMaterial);
+    shieldBarFill.position.z = 0.01;
+    shieldBarContainer.add(shieldBarFill);
+
+    return group;
+}
+
+function activateShield() {
+    shieldActive = true;
+    shieldTime = SHIELD_DURATION;
+    shieldEffect.visible = true;
+    shieldBarContainer.visible = true;
+    updateShieldBar();
+}
+
+function updateShieldBar() {
+    if (shieldBarFill) {
+        const percentage = shieldTime / SHIELD_DURATION;
+        shieldBarFill.scale.x = percentage;
+        // Center the fill bar as it scales
+        shieldBarFill.position.x = -1 * (1 - percentage);
+    }
+}
+
+function createWeaponPowerup() {
+    const group = new THREE.Group();
+
+    // Create crosshair lines with thicker center
+    const lineConfigs = [
+        // Horizontal line
+        { width: 1.0, height: 0.06, x: 0, y: 0, rot: 0 },
+        // Vertical line
+        { width: 0.06, height: 1.0, x: 0, y: 0, rot: 0 },
+        // Small gap in center
+        { width: 0.2, height: 0.2, x: 0, y: 0, rot: 0, isGap: true }
+    ];
+
+    lineConfigs.forEach(config => {
+        if (config.isGap) {
+            // Create dark center gap
+            const gapGeometry = new THREE.PlaneGeometry(config.width, config.height);
+            const gapMaterial = new THREE.MeshBasicMaterial({
+                color: 0x000000,
+                transparent: true,
+                opacity: 1,
+                side: THREE.DoubleSide
+            });
+            const gap = new THREE.Mesh(gapGeometry, gapMaterial);
+            gap.position.set(config.x, config.y, 0.01);
+            group.add(gap);
+        } else {
+            // Create line
+            const lineGeometry = new THREE.PlaneGeometry(config.width, config.height);
+            const lineMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff0000,
+                transparent: true,
+                opacity: 0.9,
+                side: THREE.DoubleSide
+            });
+            const line = new THREE.Mesh(lineGeometry, lineMaterial);
+            line.position.set(config.x, config.y, 0);
+            line.rotation.z = config.rot;
+            group.add(line);
+        }
+    });
+
+    // Add small dots at the ends
+    const dotPositions = [
+        { x: 0.5, y: 0 },    // Right
+        { x: -0.5, y: 0 },   // Left
+        { x: 0, y: 0.5 },    // Top
+        { x: 0, y: -0.5 }    // Bottom
+    ];
+
+    dotPositions.forEach(pos => {
+        const dotGeometry = new THREE.CircleGeometry(0.04, 16);
+        const dotMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            side: THREE.DoubleSide
+        });
+        const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+        dot.position.set(pos.x, pos.y, 0.01);
+        group.add(dot);
+    });
+
+    // Add pulsing glow effect
+    const glowGeometry = new THREE.CircleGeometry(0.6, 32);
+    const glowMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            time: { value: 0 },
+            color: { value: new THREE.Color(0xff0000) }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            uniform float time;
+            varying vec2 vUv;
+            void main() {
+                float dist = distance(vUv, vec2(0.5));
+                float pulse = sin(time * 3.0) * 0.15 + 0.85;
+                float alpha = (1.0 - dist) * 0.5 * pulse;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    glow.position.z = -0.01;
+    group.add(glow);
+
+    // Add rotation animation
+    group.userData.rotationSpeed = 0.02;
+    group.userData.glowMaterial = glowMaterial;
+    group.userData.time = 0;
+
+    // Random position
+    group.position.x = Math.random() * 16 - 8;
+    group.position.y = Math.random() * 6 + 1;
+    group.position.z = -180;
+
+    return group;
+}
+
+function activateWeaponUpgrade() {
+    weaponUpgradeActive = true;
+    weaponUpgradeTime = WEAPON_UPGRADE_DURATION;
+    weaponLevel = Math.min(weaponLevel + 1, 4); // Cap at 4 beams instead of 3
+}
+
+// Add this new function to check powerup collisions with a larger radius
+function checkPowerupCollision(powerup, player) {
+    const dx = powerup.position.x - player.position.x;
+    const dy = powerup.position.y - player.position.y;
+    const dz = powerup.position.z - player.position.z;
+    
+    // Use a larger distance (3.0 instead of 2.0) for more forgiving pickup
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return distance < 3.0;  // More forgiving collision radius for powerups
+}
+
+// Add this new function to create the pickup animation
+function createPickupAnimation(position, color) {
+    const group = new THREE.Group();
+    
+    // Create expanding ring
+    const ringGeometry = new THREE.RingGeometry(0.1, 0.2, 32);
+    const ringMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            color: { value: new THREE.Color(color) },
+            time: { value: 0 }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            uniform float time;
+            varying vec2 vUv;
+            void main() {
+                float alpha = 1.0 - time;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    
+    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+    group.add(ring);
+    
+    // Set position
+    group.position.copy(position);
+    
+    // Add to scene
+    scene.add(group);
+    
+    // Animation properties
+    const duration = 30; // frames
+    let time = 0;
+    
+    // Animation function
+    function animate() {
+        time++;
+        
+        // Scale up the ring
+        const scale = 1 + (time * 0.15);
+        ring.scale.set(scale, scale, 1);
+        
+        // Update shader time
+        ringMaterial.uniforms.time.value = time / duration;
+        
+        // Remove when animation is complete
+        if (time >= duration) {
+            scene.remove(group);
+            return;
+        }
+        
+        requestAnimationFrame(animate);
+    }
+    
+    // Start animation
+    animate();
+}
+
+function createHealthPowerup() {
+    const group = new THREE.Group();
+
+    // Create heart shape
+    const heartShape = new THREE.Shape();
+    heartShape.moveTo(0, 0);
+    heartShape.bezierCurveTo(-0.25, 0.25, -0.5, 0.2, -0.5, 0);
+    heartShape.bezierCurveTo(-0.5, -0.3, 0, -0.5, 0, -0.5);
+    heartShape.bezierCurveTo(0, -0.5, 0.5, -0.3, 0.5, 0);
+    heartShape.bezierCurveTo(0.5, 0.2, 0.25, 0.25, 0, 0);
+
+    const heartGeometry = new THREE.ShapeGeometry(heartShape);
+    const heartMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3366,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide
+    });
+    const heart = new THREE.Mesh(heartGeometry, heartMaterial);
+    heart.scale.set(0.5, 0.5, 0.5);
+    group.add(heart);
+
+    // Add pulsing glow effect
+    const glowGeometry = new THREE.CircleGeometry(0.6, 32);
+    const glowMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            time: { value: 0 },
+            color: { value: new THREE.Color(0xff3366) }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            uniform float time;
+            varying vec2 vUv;
+            void main() {
+                float dist = distance(vUv, vec2(0.5));
+                float pulse = sin(time * 3.0) * 0.15 + 0.85;
+                float alpha = (1.0 - dist) * 0.5 * pulse;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    glow.position.z = -0.01;
+    group.add(glow);
+
+    // Add rotation animation
+    group.userData.rotationSpeed = 0.02;
+    group.userData.glowMaterial = glowMaterial;
+    group.userData.time = 0;
+
+    // Random position
+    group.position.x = Math.random() * 16 - 8;
+    group.position.y = Math.random() * 6 + 1;
+    group.position.z = -180;
+
+    return group;
+}
+
+function activateHealthPowerup() {
+    // Only heal if health is below 100
+    if (playerHealth < 100) {
+        // Add 50% health, but don't exceed 100
+        playerHealth = Math.min(100, playerHealth + 50);
+        updateHealthBar();
+    }
+}
+
+// Optional: Add visual indicator of current difficulty
+function updateUI() {
+    document.getElementById('scoreValue').textContent = score;
+    updateHealthBar();
+    
+    // Add difficulty indicator to score display
+    const difficultyStars = '★'.repeat(difficultyLevel) + '☆'.repeat(MAX_DIFFICULTY - difficultyLevel);
+    document.getElementById('scoreValue').textContent = `${score} (${difficultyStars})`;
+} 
