@@ -41,7 +41,8 @@
             background: rgba(255, 0, 0, 0.3);
             border: 3px solid #ff0000;
             border-radius: 50%;
-            z-index: 100;
+            display: none;
+            z-index: 1000;
             touch-action: none;
             -webkit-tap-highlight-color: transparent;
             animation: pulse 2s infinite;
@@ -60,10 +61,20 @@
                 opacity: 0.7;
             }
         }
+        @media (hover: none), (pointer: coarse), (max-width: 768px) {
+            #fireButton, #joystickZone {
+                display: block !important;
+            }
+        }
         @media screen and (max-width: 768px) {
             #fireButton {
                 bottom: 30px;
-                right: 30px;
+                right: 20px;
+            }
+            
+            #joystickZone {
+                bottom: 30px;
+                left: 20px;
             }
         }
         #joystickZone {
@@ -72,15 +83,12 @@
             left: 40px;
             width: 120px;
             height: 120px;
-            z-index: 100;
+            display: none;
+            z-index: 1000;
             touch-action: none;
             -webkit-tap-highlight-color: transparent;
-        }
-        /* Show mobile controls on touch devices */
-        @media (hover: none) and (pointer: coarse) {
-            #fireButton, #joystickZone {
-                display: block !important;
-            }
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
         }
         #startScreen {
             position: fixed;

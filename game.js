@@ -30,7 +30,10 @@ let shotsHit = 0;
 let tiesFightersDestroyed = 0;
 let gameStartTime = Date.now();
 let joystick = null;
-let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
+    || (window.matchMedia("(hover: none)").matches)
+    || (window.matchMedia("(pointer: coarse)").matches)
+    || (window.innerWidth <= 768);
 let gameStarted = false;
 let shieldActive = false;
 let shieldTime = 0;
@@ -1257,17 +1260,11 @@ function restartGame() {
 init(); 
 
 function setupMobileControls() {
-    if (!isMobile) return;
-
-    // Make controls visible
+    // Remove the isMobile check since we'll control visibility with CSS
     const joystickZone = document.getElementById('joystickZone');
     const fireButton = document.getElementById('fireButton');
-    
-    // Force display block for mobile controls
-    joystickZone.style.display = 'block';
-    fireButton.style.display = 'block';
 
-    // Setup joystick with fixed position
+    // Setup joystick
     joystick = nipplejs.create({
         zone: joystickZone,
         mode: 'static',
