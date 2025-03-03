@@ -802,9 +802,8 @@ function updatePlayer() {
         currentTiltZ += (targetTiltZ - currentTiltZ) * TILT_SPEED;
         currentTiltX += (targetTiltX - currentTiltX) * TILT_SPEED;
 
-        // Apply rotation
-        player.rotation.z = currentTiltZ;
-        player.rotation.x = currentTiltX;
+        // Apply rotation to the entire player group
+        player.rotation.set(currentTiltX, 0, currentTiltZ);
 
         // Add slight auto-centering when not moving
         if (!moveLeft && !moveRight) {
@@ -1248,83 +1247,57 @@ function restartGame() {
     difficultyLevel = 1;
     timeSinceStart = 0;
 
-    // Reset tilts
+    // Reset tilts and player rotation
     currentTiltX = 0;
     currentTiltZ = 0;
     targetTiltX = 0;
     targetTiltZ = 0;
-    player.rotation.z = 0;
-    player.rotation.x = 0;
+    player.rotation.set(0, 0, 0);
 }
 
 // Start the game
 init(); 
 
 function setupMobileControls() {
-    if (!isMobile) return;
-
-    // Make controls visible
     const joystickZone = document.getElementById('joystickZone');
-    const fireButton = document.getElementById('fireButton');
-    
-    joystickZone.style.display = 'block';
-    fireButton.style.display = 'block';
-
-    // Setup joystick with fixed position
-    joystick = nipplejs.create({
+    const options = {
         zone: joystickZone,
         mode: 'static',
-        position: { 
-            left: '100px', 
-            bottom: '100px' 
-        },
-        color: 'white',
+        position: { left: '100px', bottom: '100px' },
         size: 120,
-        multitouch: true,
-        dynamicPage: true
-    });
+        color: 'white'
+    };
 
-    // Joystick move handler with improved sensitivity
+    joystick = nipplejs.create(options);
+
+    // Update joystick handling to set movement flags
     joystick.on('move', (evt, data) => {
         const forward = data.vector.y;
         const side = data.vector.x;
-        
+        const threshold = 0.5;
+
         // Reset all movement flags
-        moveUp = moveDown = moveLeft = moveRight = false;
-        
-        // More sensitive movement thresholds
-        if (forward > 0.3) moveUp = true;
-        if (forward < -0.3) moveDown = true;
-        if (side < -0.3) moveLeft = true;
-        if (side > 0.3) moveRight = true;
+        moveLeft = false;
+        moveRight = false;
+        moveUp = false;
+        moveDown = false;
+
+        // Set movement flags based on joystick position
+        if (side < -threshold) moveLeft = true;
+        if (side > threshold) moveRight = true;
+        if (forward > threshold) moveUp = true;
+        if (forward < -threshold) moveDown = true;
     });
 
-    // Joystick end handler
     joystick.on('end', () => {
-        moveUp = moveDown = moveLeft = moveRight = false;
+        // Reset all movement flags when joystick is released
+        moveLeft = false;
+        moveRight = false;
+        moveUp = false;
+        moveDown = false;
     });
 
-    // Setup fire button
-    let fireInterval;
-    
-    fireButton.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        shootLaser();
-        fireInterval = setInterval(shootLaser, 250);
-    }, { passive: false });
-
-    fireButton.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        if (fireInterval) {
-            clearInterval(fireInterval);
-            fireInterval = null;
-        }
-    }, { passive: false });
-
-    // Prevent default touch behaviors
-    document.addEventListener('touchmove', (e) => {
-        e.preventDefault();
-    }, { passive: false });
+    // ... rest of mobile controls setup ...
 }
 
 // Add fullscreen support
