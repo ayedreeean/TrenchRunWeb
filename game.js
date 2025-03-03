@@ -31,8 +31,12 @@ let tiesFightersDestroyed = 0;
 let gameStartTime = Date.now();
 let joystick = null;
 let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+let gameStarted = false;
 
 function init() {
+    // Create start screen handler
+    document.getElementById('startButton').addEventListener('click', startGame);
+
     // Create scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
@@ -76,6 +80,31 @@ function init() {
     if (isMobile) {
         setupMobileControls();
     }
+}
+
+function startGame() {
+    if (gameStarted) return;
+    gameStarted = true;
+
+    // Remove start screen
+    const startScreen = document.getElementById('startScreen');
+    startScreen.style.display = 'none';
+
+    // Request full screen on mobile
+    if (isMobile) {
+        requestFullScreen(document.documentElement);
+    }
+
+    // Initialize game
+    setupGame();
+    setupMobileControls();
+}
+
+function setupGame() {
+    // Move all your existing init code here
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    // ... rest of your existing init code ...
 }
 
 function createTrench() {
@@ -939,16 +968,23 @@ function restartGame() {
 init(); 
 
 function setupMobileControls() {
-    // Setup joystick
+    if (!isMobile) return;
+
+    // Make controls visible
+    document.getElementById('joystickZone').style.display = 'block';
+    document.getElementById('fireButton').style.display = 'block';
+
+    // Setup joystick with fixed position
     joystick = nipplejs.create({
         zone: document.getElementById('joystickZone'),
         mode: 'static',
         position: { left: '100px', bottom: '100px' },
         color: 'white',
-        size: 120
+        size: 120,
+        multitouch: true
     });
 
-    // Joystick move handler
+    // Joystick move handler with improved sensitivity
     joystick.on('move', (evt, data) => {
         const forward = data.vector.y;
         const side = data.vector.x;
@@ -956,11 +992,11 @@ function setupMobileControls() {
         // Reset all movement flags
         moveUp = moveDown = moveLeft = moveRight = false;
         
-        // Set movement based on joystick position
-        if (forward > 0.5) moveUp = true;
-        if (forward < -0.5) moveDown = true;
-        if (side < -0.5) moveLeft = true;
-        if (side > 0.5) moveRight = true;
+        // More sensitive movement thresholds
+        if (forward > 0.3) moveUp = true;
+        if (forward < -0.3) moveDown = true;
+        if (side < -0.3) moveLeft = true;
+        if (side > 0.3) moveRight = true;
     });
 
     // Joystick end handler
@@ -968,26 +1004,45 @@ function setupMobileControls() {
         moveUp = moveDown = moveLeft = moveRight = false;
     });
 
-    // Setup fire button
+    // Setup fire button with improved touch handling
     const fireButton = document.getElementById('fireButton');
     
-    // Touch handlers for fire button
-    fireButton.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        shootLaser();
-    });
-
-    // Optional: Add continuous firing while holding
     let fireInterval;
+    
     fireButton.addEventListener('touchstart', (e) => {
         e.preventDefault();
         shootLaser();
-        fireInterval = setInterval(shootLaser, 250); // Fire every 250ms while holding
-    });
+        fireInterval = setInterval(shootLaser, 250);
+    }, { passive: false });
 
-    fireButton.addEventListener('touchend', () => {
+    fireButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
         if (fireInterval) {
             clearInterval(fireInterval);
+            fireInterval = null;
         }
-    });
-} 
+    }, { passive: false });
+
+    // Prevent default touch behaviors
+    document.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+    }, { passive: false });
+}
+
+// Add fullscreen support
+function requestFullScreen(element) {
+    if (element.requestFullscreen) {
+        element.requestFullscreen();
+    } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+    } else if (element.mozRequestFullScreen) {
+        element.mozRequestFullScreen();
+    } else if (element.msRequestFullscreen) {
+        element.msRequestFullscreen();
+    }
+}
+
+// Add orientation change handler
+window.addEventListener('orientationchange', () => {
+    setTimeout(onWindowResize, 100);
+}); 
