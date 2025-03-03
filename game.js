@@ -1,0 +1,932 @@
+let scene, camera, renderer, player, trench;
+let lasers = [];
+let enemies = [];
+let score = 0;
+let moveLeft = false;
+let moveRight = false;
+let moveUp = false;
+let moveDown = false;
+let time = 0;
+let enemyLasers = [];
+let explosions = [];
+let cameraShake = {
+    intensity: 0,
+    decay: 0.9,
+    maxOffset: 0.8,
+    originalPos: { x: 0, y: 4, z: 12 },
+    originalRot: { x: -0.15, y: 0, z: 0 },
+    currentPos: { x: 0, y: 4, z: 12 },
+    currentRot: { x: -0.15, y: 0, z: 0 },
+    smoothness: 0.35
+};
+let playerExploding = false;
+let playerRespawnTimer = 0;
+let playerHealth = 100;
+let invulnerableTime = 0;
+let jetStreams = [];
+let gameActive = true;
+let shotsFired = 0;
+let shotsHit = 0;
+let tiesFightersDestroyed = 0;
+let gameStartTime = Date.now();
+
+function init() {
+    // Create scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    
+    // Create camera
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.y = 4;
+    camera.position.z = 12;
+    camera.rotation.x = -0.15;
+    
+    // Create renderer
+    renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // Create player (X-wing) with adjusted starting position
+    player = createPlayer();
+    player.position.y = 2;
+    scene.add(player);
+    
+    // Create trench
+    createTrench();
+    
+    // Add lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(0, 1, 0);
+    scene.add(directionalLight);
+    
+    // Start game loop
+    animate();
+    
+    // Add event listeners
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('resize', onWindowResize, false);
+}
+
+function createTrench() {
+    trench = new THREE.Group();
+
+    // Grid shader material with time uniform
+    const gridMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            color: { value: new THREE.Color(0xaaaaaa) },
+            time: { value: 0 },
+            isWall: { value: 0 }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            uniform float time;
+            uniform float isWall;
+            varying vec2 vUv;
+            void main() {
+                float gridSize = 0.2;
+                float lineWidth = 0.008;
+                float baseSpeed = 0.2;
+                
+                vec2 uv = vUv;
+                if (isWall > 0.5) {
+                    uv.x *= 2.0;
+                    uv = vec2(uv.y, uv.x);
+                    // Offset to align with floor grid
+                    uv += 0.5;
+                    uv.y -= time * (baseSpeed * 2.0);
+                } else {
+                    uv.x *= 1.0;
+                    // Offset to align with wall grid
+                    uv += 0.5;
+                    uv.y += time * baseSpeed;
+                }
+                
+                vec2 coord = uv / gridSize;
+                vec2 grid = abs(fract(coord - 0.5) - 0.5);
+                float line = step(0.5 - lineWidth, max(grid.x, grid.y));
+                
+                gl_FragColor = vec4(color, line * 0.6);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+
+    // Create longer floor
+    const floorGeometry = new THREE.PlaneGeometry(20, 300);
+    const floorMaterial = gridMaterial.clone();
+    floorMaterial.uniforms.isWall = { value: 0 };
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.z = -150;
+    trench.add(floor);
+
+    // Create longer walls
+    const wallGeometry = new THREE.PlaneGeometry(300, 10);
+    const leftWallMaterial = gridMaterial.clone();
+    leftWallMaterial.uniforms.isWall = { value: 1 };
+    const leftWall = new THREE.Mesh(wallGeometry, leftWallMaterial);
+    leftWall.rotation.y = Math.PI / 2;
+    leftWall.rotation.z = Math.PI;
+    leftWall.position.x = -10;
+    leftWall.position.y = 5;
+    leftWall.position.z = -150;
+    trench.add(leftWall);
+
+    // Right wall
+    const rightWallMaterial = gridMaterial.clone();
+    rightWallMaterial.uniforms.isWall = { value: 1 };
+    const rightWall = new THREE.Mesh(wallGeometry, rightWallMaterial);
+    rightWall.rotation.y = -Math.PI / 2;
+    rightWall.position.x = 10;
+    rightWall.position.y = 5;
+    rightWall.position.z = -150;
+    trench.add(rightWall);
+
+    scene.add(trench);
+}
+
+function handleKeyDown(event) {
+    switch(event.key) {
+        case 'ArrowLeft':
+            moveLeft = true;
+            break;
+        case 'ArrowRight':
+            moveRight = true;
+            break;
+        case 'ArrowUp':
+            moveUp = true;
+            break;
+        case 'ArrowDown':
+            moveDown = true;
+            break;
+        case ' ':
+            shootLaser();
+            break;
+    }
+}
+
+function handleKeyUp(event) {
+    switch(event.key) {
+        case 'ArrowLeft':
+            moveLeft = false;
+            break;
+        case 'ArrowRight':
+            moveRight = false;
+            break;
+        case 'ArrowUp':
+            moveUp = false;
+            break;
+        case 'ArrowDown':
+            moveDown = false;
+            break;
+    }
+}
+
+function shootLaser() {
+    if (!gameActive) return;
+    
+    shotsFired++;
+    const laserGeometry = new THREE.BoxGeometry(0.2, 0.2, 4.0);  // Increased from 2.5 to 4.0
+    const laserMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const laser = new THREE.Mesh(laserGeometry, laserMaterial);
+    laser.position.copy(player.position);
+    laser.position.z -= 2;  // Adjusted to account for longer laser
+    lasers.push(laser);
+    scene.add(laser);
+}
+
+function createPlayer() {
+    const group = new THREE.Group();
+    const mainColor = 0xDDDDDD;  // Light gray like in reference
+    const accentColor = 0xCC0000; // Red accent color for wingtips
+
+    // Main fuselage (thinner and longer)
+    const fuselageGeometry = new THREE.BoxGeometry(0.25, 0.15, 2.0);
+    const fuselageMaterial = new THREE.MeshBasicMaterial({ color: mainColor });
+    const fuselage = new THREE.Mesh(fuselageGeometry, fuselageMaterial);
+    group.add(fuselage);
+
+    // Create wings
+    function createWings() {
+        // Wing dimensions based on reference
+        const wingLength = 1.4;
+        const wingWidth = 0.2;
+        const wingThickness = 0.03;
+        const engineSize = 0.12;
+        const engineLength = 0.5;
+
+        const wingGeometry = new THREE.BoxGeometry(wingLength, wingThickness, wingWidth);
+        const wingMaterial = new THREE.MeshBasicMaterial({ color: mainColor });
+        
+        // Create the four wings in X configuration
+        const wingConfigs = [
+            { x: 0.5, y: 0.1, z: 0.4, angle: Math.PI / 12 },   // Right top
+            { x: 0.5, y: -0.1, z: 0.4, angle: -Math.PI / 12 }, // Right bottom
+            { x: -0.5, y: 0.1, z: 0.4, angle: -Math.PI / 12 }, // Left top
+            { x: -0.5, y: -0.1, z: 0.4, angle: Math.PI / 12 }  // Left bottom
+        ];
+
+        // Update engine glow with stronger effect
+        const engineGlowGeometry = new THREE.CircleGeometry(engineSize * 1.2, 8);
+        const engineGlowMaterial = new THREE.MeshBasicMaterial({
+            color: 0x33ffff,
+            transparent: true,
+            opacity: 0.8,
+            side: THREE.DoubleSide  // Make glow visible from both sides
+        });
+
+        wingConfigs.forEach(config => {
+            const wing = new THREE.Mesh(wingGeometry, wingMaterial);
+            wing.position.set(config.x, config.y, config.z);
+            wing.rotation.z = config.angle;
+
+            // Add engine
+            const engineGeometry = new THREE.CylinderGeometry(engineSize, engineSize, engineLength, 8);
+            const engineMaterial = new THREE.MeshBasicMaterial({ color: 0x444444 });
+            const engine = new THREE.Mesh(engineGeometry, engineMaterial);
+            
+            engine.position.x = 0;
+            engine.position.z = 0.3;
+            engine.rotation.x = Math.PI/2;
+            wing.add(engine);
+
+            // Create engine glow container to handle rotation independently
+            const glowContainer = new THREE.Object3D();
+            glowContainer.position.copy(engine.position);
+            glowContainer.position.z += engineLength/2 + 0.01; // Position just behind engine
+            wing.add(glowContainer);
+
+            // Add main engine glow
+            const glow = new THREE.Mesh(engineGlowGeometry, engineGlowMaterial);
+            glow.rotation.y = Math.PI; // Face backward
+            glowContainer.add(glow);
+
+            // Add inner glow for more intensity
+            const innerGlowGeometry = new THREE.CircleGeometry(engineSize * 0.7, 8);
+            const innerGlowMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.9,
+                side: THREE.DoubleSide
+            });
+            const innerGlow = new THREE.Mesh(innerGlowGeometry, innerGlowMaterial);
+            innerGlow.position.z = -0.01; // Slightly in front of main glow
+            innerGlow.rotation.y = Math.PI;
+            glowContainer.add(innerGlow);
+
+            // Add laser cannon
+            const cannonGeometry = new THREE.BoxGeometry(0.3, 0.04, 0.04);
+            const cannon = new THREE.Mesh(cannonGeometry, engineMaterial);
+            cannon.position.x = wingLength/2 - 0.3;
+            cannon.position.z = -0.1;
+            wing.add(cannon);
+
+            group.add(wing);
+
+            // After creating the engine
+            const jetStream = createJetStream(
+                new THREE.Vector3(
+                    engine.position.x,
+                    engine.position.y,
+                    engine.position.z + engineLength
+                ),
+                wing  // Pass the wing instead of engine to get proper world position
+            );
+            jetStreams.push(jetStream);
+        });
+    }
+
+    // Nose section (more pointed like reference)
+    const noseGeometry = new THREE.ConeGeometry(0.12, 0.5, 8);
+    const nose = new THREE.Mesh(noseGeometry, fuselageMaterial);
+    nose.rotation.x = -Math.PI/2;
+    nose.position.z = -1.2;
+    group.add(nose);
+
+    // Cockpit (more angular)
+    const cockpitGeometry = new THREE.BoxGeometry(0.2, 0.1, 0.4);
+    const cockpitMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
+    const cockpit = new THREE.Mesh(cockpitGeometry, cockpitMaterial);
+    cockpit.position.y = 0.12;
+    cockpit.position.z = 0.2;  // Changed from -0.5 to 0.2 to move cockpit back
+    group.add(cockpit);
+
+    // Add wing assembly
+    createWings();
+
+    return group;
+}
+
+function createTieFighter() {
+    const group = new THREE.Group();
+
+    // Create the center sphere (cockpit)
+    const cockpitGeometry = new THREE.SphereGeometry(0.3, 16, 16);
+    const cockpitMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xDDDDDD,
+        transparent: false
+    });
+    const cockpit = new THREE.Mesh(cockpitGeometry, cockpitMaterial);
+    group.add(cockpit);
+
+    // Create the hexagonal wings
+    const wingGeometry = new THREE.CircleGeometry(1, 6);
+    const wingMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xDDDDDD,
+        side: THREE.DoubleSide,
+        transparent: false
+    });
+    
+    // Left Wing
+    const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
+    leftWing.position.x = -0.7;
+    leftWing.rotation.y = Math.PI / 2;
+    group.add(leftWing);
+    
+    // Right Wing
+    const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
+    rightWing.position.x = 0.7;
+    rightWing.rotation.y = Math.PI / 2;
+    group.add(rightWing);
+
+    // Add simple struts
+    const strutGeometry = new THREE.BoxGeometry(0.4, 0.1, 0.1);
+    const strutMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xDDDDDD,
+        transparent: false
+    });
+    
+    const leftStrut = new THREE.Mesh(strutGeometry, strutMaterial);
+    leftStrut.position.x = -0.35;
+    group.add(leftStrut);
+    
+    const rightStrut = new THREE.Mesh(strutGeometry, strutMaterial);
+    rightStrut.position.x = 0.35;
+    group.add(rightStrut);
+
+    return group;
+}
+
+function enemyShoot(enemy) {
+    const laserGeometry = new THREE.BoxGeometry(0.2, 0.2, 4.0);  // Increased from 2.5 to 4.0
+    const laserMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const laser = new THREE.Mesh(laserGeometry, laserMaterial);
+    laser.position.copy(enemy.position);
+    laser.position.z += 2;  // Adjusted to account for longer laser
+    enemyLasers.push(laser);
+    scene.add(laser);
+}
+
+function spawnEnemy() {
+    const enemy = createTieFighter();
+    enemy.rotation.y = Math.PI;
+    enemy.position.x = Math.random() * 16 - 8;
+    enemy.position.y = Math.random() * 6 + 1;
+    enemy.position.z = -180;  // Spawn much further back
+    enemies.push(enemy);
+    scene.add(enemy);
+}
+
+function createExplosion(position) {
+    // Create spark particles
+    const particleCount = 30;  // More particles
+    const geometry = new THREE.BufferGeometry();
+    const positions = [];
+    const velocities = [];
+    
+    // Create particles in a sphere
+    for (let i = 0; i < particleCount; i++) {
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.random() * Math.PI;
+        const r = 0.2;  // Larger initial radius
+        
+        positions.push(
+            position.x + r * Math.sin(phi) * Math.cos(theta),
+            position.y + r * Math.sin(phi) * Math.sin(theta),
+            position.z + r * Math.cos(phi)
+        );
+        
+        velocities.push(
+            (Math.random() - 0.5) * 0.5,  // Faster particle spread
+            (Math.random() - 0.5) * 0.5,
+            (Math.random() - 0.5) * 0.5
+        );
+    }
+    
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    
+    const sparkMaterial = new THREE.PointsMaterial({
+        color: 0xffaa44,  // More orange color for sparks
+        size: 0.3,        // Larger particles
+        transparent: true
+    });
+    
+    const sparks = new THREE.Points(geometry, sparkMaterial);
+    sparks.velocities = velocities;
+    sparks.life = 1.0;
+    
+    // Create expanding fire sphere
+    const fireGeometry = new THREE.SphereGeometry(0.3, 16, 16);  // Larger initial size
+    const fireMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,  // White core
+        transparent: true,
+        opacity: 0.9
+    });
+    const fire = new THREE.Mesh(fireGeometry, fireMaterial);
+    fire.position.copy(position);
+    fire.scale.set(1, 1, 1);
+    fire.life = 1.0;
+    
+    // Add outer fire glow
+    const outerFireGeometry = new THREE.SphereGeometry(0.4, 16, 16);
+    const outerFireMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff6600,  // Orange outer glow
+        transparent: true,
+        opacity: 0.7
+    });
+    const outerFire = new THREE.Mesh(outerFireGeometry, outerFireMaterial);
+    outerFire.position.copy(position);
+    outerFire.scale.set(1, 1, 1);
+    outerFire.life = 1.0;
+    
+    scene.add(sparks);
+    scene.add(fire);
+    scene.add(outerFire);
+    explosions.push({ sparks, fire, outerFire });
+}
+
+function updateExplosions() {
+    for (let i = explosions.length - 1; i >= 0; i--) {
+        const explosion = explosions[i];
+        const { sparks, fire, outerFire } = explosion;
+        
+        // Update spark particles
+        const positions = sparks.geometry.attributes.position.array;
+        for (let j = 0; j < positions.length; j += 3) {
+            positions[j] += sparks.velocities[j];
+            positions[j + 1] += sparks.velocities[j + 1];
+            positions[j + 2] += sparks.velocities[j + 2];
+        }
+        sparks.geometry.attributes.position.needsUpdate = true;
+        
+        // Update fire spheres
+        const scale = 1 + (1 - fire.life) * 4;  // Larger expansion
+        fire.scale.set(scale, scale, scale);
+        outerFire.scale.set(scale * 1.5, scale * 1.5, scale * 1.5);  // Outer fire expands more
+        
+        // Fade out effects
+        sparks.life -= 0.02;
+        fire.life -= 0.04;
+        outerFire.life -= 0.04;
+        
+        sparks.material.opacity = sparks.life;
+        fire.material.opacity = fire.life * 0.9;
+        outerFire.material.opacity = outerFire.life * 0.7;
+        
+        // Remove when effects are fully faded
+        if (sparks.life <= 0 || fire.life <= 0) {
+            scene.remove(sparks);
+            scene.remove(fire);
+            scene.remove(outerFire);
+            explosions.splice(i, 1);
+        }
+    }
+}
+
+function checkCollision(obj1, obj2) {
+    const distance = obj1.position.distanceTo(obj2.position);
+    return distance < 2.0; // Increased from 1.5 to 2.0 for more forgiving hit detection
+}
+
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function shakeCamera() {
+    cameraShake.intensity = 3.0;
+}
+
+function updateCameraShake() {
+    if (cameraShake.intensity > 0) {
+        const shake = cameraShake.intensity * cameraShake.intensity;
+        
+        // Calculate target position with shake
+        const targetPos = {
+            x: cameraShake.originalPos.x + (Math.random() - 0.5) * shake * cameraShake.maxOffset,
+            y: cameraShake.originalPos.y + (Math.random() - 0.5) * shake * cameraShake.maxOffset,
+            z: cameraShake.originalPos.z + (Math.random() - 0.5) * shake * cameraShake.maxOffset
+        };
+        
+        // Increased rotation shake values from 0.08 to 0.12
+        const targetRot = {
+            x: cameraShake.originalRot.x + (Math.random() - 0.5) * shake * 0.12,
+            y: (Math.random() - 0.5) * shake * 0.12,
+            z: (Math.random() - 0.5) * shake * 0.12
+        };
+        
+        // Smoothly interpolate current position and rotation to target
+        cameraShake.currentPos.x += (targetPos.x - cameraShake.currentPos.x) * cameraShake.smoothness;
+        cameraShake.currentPos.y += (targetPos.y - cameraShake.currentPos.y) * cameraShake.smoothness;
+        cameraShake.currentPos.z += (targetPos.z - cameraShake.currentPos.z) * cameraShake.smoothness;
+        
+        cameraShake.currentRot.x += (targetRot.x - cameraShake.currentRot.x) * cameraShake.smoothness;
+        cameraShake.currentRot.y += (targetRot.y - cameraShake.currentRot.y) * cameraShake.smoothness;
+        cameraShake.currentRot.z += (targetRot.z - cameraShake.currentRot.z) * cameraShake.smoothness;
+        
+        // Apply smoothed values to camera
+        camera.position.set(
+            cameraShake.currentPos.x,
+            cameraShake.currentPos.y,
+            cameraShake.currentPos.z
+        );
+        
+        camera.rotation.set(
+            cameraShake.currentRot.x,
+            cameraShake.currentRot.y,
+            cameraShake.currentRot.z
+        );
+        
+        // Decay the shake intensity
+        cameraShake.intensity *= cameraShake.decay;
+        
+        // Reset when shake is very small
+        if (cameraShake.intensity < 0.01) {
+            cameraShake.intensity = 0;
+            // Smoothly return to original position
+            cameraShake.currentPos = { ...cameraShake.originalPos };
+            cameraShake.currentRot = { ...cameraShake.originalRot };
+        }
+    } else {
+        // Continue smooth transition to original position even after shake ends
+        cameraShake.currentPos.x += (cameraShake.originalPos.x - cameraShake.currentPos.x) * cameraShake.smoothness;
+        cameraShake.currentPos.y += (cameraShake.originalPos.y - cameraShake.currentPos.y) * cameraShake.smoothness;
+        cameraShake.currentPos.z += (cameraShake.originalPos.z - cameraShake.currentPos.z) * cameraShake.smoothness;
+        
+        cameraShake.currentRot.x += (cameraShake.originalRot.x - cameraShake.currentRot.x) * cameraShake.smoothness;
+        cameraShake.currentRot.y += (cameraShake.originalRot.y - cameraShake.currentRot.y) * cameraShake.smoothness;
+        cameraShake.currentRot.z += (cameraShake.originalRot.z - cameraShake.currentRot.z) * cameraShake.smoothness;
+        
+        camera.position.set(
+            cameraShake.currentPos.x,
+            cameraShake.currentPos.y,
+            cameraShake.currentPos.z
+        );
+        
+        camera.rotation.set(
+            cameraShake.currentRot.x,
+            cameraShake.currentRot.y,
+            cameraShake.currentRot.z
+        );
+    }
+}
+
+function playerHit(damage = 20) {
+    if (invulnerableTime <= 0) {
+        playerHealth = Math.max(0, playerHealth - damage);
+        updateHealthBar();
+        createExplosion(player.position.clone());
+        shakeCamera();
+        
+        // Add brief invulnerability
+        invulnerableTime = 60;
+        
+        // Flash player to indicate damage
+        flashPlayer();
+        
+        // Immediately check for game over
+        if (playerHealth <= 0) {
+            playerHealth = 0; // Ensure health is exactly 0
+            updateHealthBar(); // Update the health bar one last time
+            gameOver();
+            return;
+        }
+    }
+}
+
+function updateHealthBar() {
+    const healthFill = document.getElementById('health-fill');
+    healthFill.style.width = `${playerHealth}%`;
+    
+    // Change color based on health
+    if (playerHealth > 60) {
+        healthFill.style.background = '#00ff00';  // Green
+    } else if (playerHealth > 30) {
+        healthFill.style.background = '#ffff00';  // Yellow
+    } else {
+        healthFill.style.background = '#ff0000';  // Red
+    }
+}
+
+function flashPlayer() {
+    player.material.color.setHex(0xff0000);  // Flash red
+    setTimeout(() => {
+        player.material.color.setHex(0x888888);  // Return to normal color
+    }, 100);
+}
+
+function gameOver() {
+    gameActive = false;
+    createGameOverScreen();
+}
+
+function updatePlayer() {
+    // Check for game over condition first
+    if (playerHealth <= 0 && gameActive) {
+        gameOver();
+        return;
+    }
+
+    // Update invulnerability timer
+    if (invulnerableTime > 0) {
+        invulnerableTime--;
+        // Make player flash while invulnerable
+        player.visible = (invulnerableTime % 4 < 2);
+    } else {
+        player.visible = true;
+    }
+
+    // Only process movement if game is active
+    if (gameActive) {
+        const speed = 0.15;
+        if(moveLeft && player.position.x > -8) player.position.x -= speed;
+        if(moveRight && player.position.x < 8) player.position.x += speed;
+        if(moveUp && player.position.y < 7) player.position.y += speed;
+        if(moveDown && player.position.y > 0) player.position.y -= speed;
+    }
+}
+
+function updateGameObjects() {
+    if (!gameActive) return;  // Don't update if game is over
+    
+    // Update player lasers
+    for(let i = lasers.length - 1; i >= 0; i--) {
+        lasers[i].position.z -= 2;
+        if(lasers[i].position.z < -200) {
+            scene.remove(lasers[i]);
+            lasers.splice(i, 1);
+        }
+    }
+
+    // Update enemy lasers
+    for(let i = enemyLasers.length - 1; i >= 0; i--) {
+        enemyLasers[i].position.z += 2;
+        if(enemyLasers[i].position.z > 10) {
+            scene.remove(enemyLasers[i]);
+            enemyLasers.splice(i, 1);
+        }
+        
+        // Check collision with player
+        if(checkCollision(enemyLasers[i], player)) {
+            playerHit(15);  // Laser does 15 damage
+            scene.remove(enemyLasers[i]);
+            enemyLasers.splice(i, 1);
+            continue;
+        }
+    }
+    
+    // Update enemies with slower speed and reduced spawn rate
+    if(Math.random() < 0.01) spawnEnemy();  // Reduced from 0.015 to 0.01 (33% slower spawn rate)
+    
+    for(let i = enemies.length - 1; i >= 0; i--) {
+        enemies[i].position.z += 0.56;  // Reduced from 0.7 to 0.56 (20% slower)
+        
+        // Random chance to shoot when in range (increased from 0.01 to 0.015)
+        if(enemies[i].position.z > -100 && Math.random() < 0.015) {
+            enemyShoot(enemies[i]);
+        }
+
+        if(enemies[i].position.z > 10) {
+            scene.remove(enemies[i]);
+            enemies.splice(i, 1);
+            continue;
+        }
+        
+        // Check collision with player
+        if(checkCollision(enemies[i], player)) {
+            playerHit(35);  // Collision does 35 damage
+            createExplosion(enemies[i].position.clone());
+            scene.remove(enemies[i]);
+            enemies.splice(i, 1);
+            continue;
+        }
+
+        // Add back laser hit detection
+        for(let j = lasers.length - 1; j >= 0; j--) {
+            if(checkCollision(enemies[i], lasers[j])) {
+                createExplosion(enemies[i].position.clone());
+                scene.remove(enemies[i]);
+                scene.remove(lasers[j]);
+                enemies.splice(i, 1);
+                lasers.splice(j, 1);
+                score += 100;
+                shotsHit++;  // Track successful hits
+                tiesFightersDestroyed++;  // Track destroyed fighters
+                document.getElementById('scoreValue').textContent = score;
+                break;
+            }
+        }
+    }
+}
+
+function createJetStream(position, parentObject) {
+    const particleCount = 30;  // Increased particle count for longer trails
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(particleCount * 3);
+    const opacities = new Float32Array(particleCount);
+    
+    // Initialize all particles
+    for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = position.x;
+        positions[i * 3 + 1] = position.y;
+        positions[i * 3 + 2] = position.z;
+        opacities[i] = 0;
+    }
+    
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1));
+    
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            color: { value: new THREE.Color(0x33ffff) }
+        },
+        vertexShader: `
+            attribute float opacity;
+            varying float vOpacity;
+            void main() {
+                vOpacity = opacity;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = 2.0;  // Smaller points for more stream-like effect
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            varying float vOpacity;
+            void main() {
+                gl_FragColor = vec4(color, vOpacity);
+            }
+        `,
+        transparent: true,
+        depthWrite: false
+    });
+    
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
+    
+    return {
+        points,
+        parentObject,
+        update: function() {
+            const positions = this.points.geometry.attributes.position.array;
+            const opacities = this.points.geometry.attributes.opacity.array;
+            
+            // Get world position of the engine
+            const worldPos = new THREE.Vector3();
+            parentObject.getWorldPosition(worldPos);
+            
+            // Move all particles back (along Z axis only)
+            for (let i = particleCount - 1; i >= 1; i--) {
+                // Keep X and Y positions the same as the previous particle
+                positions[i * 3] = positions[(i - 1) * 3];
+                positions[i * 3 + 1] = positions[(i - 1) * 3 + 1];
+                // Move back along Z axis
+                positions[i * 3 + 2] = positions[(i - 1) * 3 + 2] + 0.2; // Increased spacing
+                opacities[i] = opacities[i - 1] * 0.95;
+            }
+            
+            // Add new particle at engine position
+            positions[0] = worldPos.x;
+            positions[1] = worldPos.y;
+            positions[2] = worldPos.z + 0.5; // Start slightly behind engine
+            opacities[0] = 0.6; // Reduced initial opacity for subtler effect
+            
+            this.points.geometry.attributes.position.needsUpdate = true;
+            this.points.geometry.attributes.opacity.needsUpdate = true;
+        }
+    };
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    // Update time for grid animation
+    time += 0.01;
+    if (trench) {
+        trench.children.forEach(child => {
+            if (child.material && child.material.uniforms) {
+                child.material.uniforms.time.value = time;
+            }
+        });
+    }
+    
+    // Update jet streams
+    jetStreams.forEach(stream => stream.update());
+    
+    updatePlayer();  // New player update function
+    updateCameraShake();
+    updateExplosions();
+    updateGameObjects();
+    renderer.render(scene, camera);
+}
+
+function createGameOverScreen() {
+    const overlay = document.createElement('div');
+    overlay.id = 'gameOverOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-family: 'Arial', sans-serif;
+        z-index: 1000;
+    `;
+
+    const gameTimeMs = Date.now() - gameStartTime;
+    const seconds = Math.floor(gameTimeMs / 1000);
+    const milliseconds = gameTimeMs % 1000;
+    const timeString = `${seconds}.${milliseconds.toString().padStart(3, '0')}`;
+    const accuracy = shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0;
+
+    overlay.innerHTML = `
+        <h1 style="font-size: 48px; margin-bottom: 20px;">GAME OVER</h1>
+        <div style="font-size: 24px; margin-bottom: 40px; text-align: center;">
+            <p>Score: ${score}</p>
+            <p>Time Survived: ${timeString} seconds</p>
+            <p>TIE Fighters Destroyed: ${tiesFightersDestroyed}</p>
+            <p>Accuracy: ${accuracy}%</p>
+        </div>
+        <button id="restartButton" style="
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #ff0000;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        ">Restart Game</button>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Add hover effect to button
+    const button = document.getElementById('restartButton');
+    button.addEventListener('mouseover', () => button.style.background = '#cc0000');
+    button.addEventListener('mouseout', () => button.style.background = '#ff0000');
+    button.addEventListener('click', restartGame);
+}
+
+function restartGame() {
+    // Remove game over screen
+    const overlay = document.getElementById('gameOverOverlay');
+    if (overlay) {
+        document.body.removeChild(overlay);
+    }
+    
+    // Reset game variables
+    score = 0;
+    playerHealth = 100;
+    gameActive = true;
+    shotsFired = 0;
+    shotsHit = 0;
+    tiesFightersDestroyed = 0;
+    gameStartTime = Date.now();
+    
+    // Reset player position
+    player.position.set(0, 2, 0);
+    
+    // Clear all existing enemies and lasers
+    enemies.forEach(enemy => scene.remove(enemy));
+    enemies = [];
+    lasers.forEach(laser => scene.remove(laser));
+    lasers = [];
+    enemyLasers.forEach(laser => scene.remove(laser));
+    enemyLasers = [];
+    
+    // Reset UI
+    document.getElementById('scoreValue').textContent = '0';
+    updateHealthBar();
+}
+
+// Start the game
+init(); 
