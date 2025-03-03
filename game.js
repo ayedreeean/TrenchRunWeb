@@ -1259,45 +1259,70 @@ function restartGame() {
 init(); 
 
 function setupMobileControls() {
+    if (!isMobile) return;
+
+    // Make controls visible
     const joystickZone = document.getElementById('joystickZone');
-    const options = {
+    const fireButton = document.getElementById('fireButton');
+    
+    joystickZone.style.display = 'block';
+    fireButton.style.display = 'block';
+
+    // Setup joystick with fixed position
+    joystick = nipplejs.create({
         zone: joystickZone,
         mode: 'static',
-        position: { left: '100px', bottom: '100px' },
+        position: { 
+            left: '100px', 
+            bottom: '100px' 
+        },
+        color: 'white',
         size: 120,
-        color: 'white'
-    };
+        multitouch: true,
+        dynamicPage: true
+    });
 
-    joystick = nipplejs.create(options);
-
-    // Update joystick handling to set movement flags
+    // Joystick move handler with improved sensitivity
     joystick.on('move', (evt, data) => {
         const forward = data.vector.y;
         const side = data.vector.x;
-        const threshold = 0.5;
 
         // Reset all movement flags
-        moveLeft = false;
-        moveRight = false;
-        moveUp = false;
-        moveDown = false;
+        moveUp = moveDown = moveLeft = moveRight = false;
 
-        // Set movement flags based on joystick position
-        if (side < -threshold) moveLeft = true;
-        if (side > threshold) moveRight = true;
-        if (forward > threshold) moveUp = true;
-        if (forward < -threshold) moveDown = true;
+        // More sensitive movement thresholds
+        if (forward > 0.3) moveUp = true;
+        if (forward < -0.3) moveDown = true;
+        if (side < -0.3) moveLeft = true;
+        if (side > 0.3) moveRight = true;
     });
 
+    // Joystick end handler
     joystick.on('end', () => {
-        // Reset all movement flags when joystick is released
-        moveLeft = false;
-        moveRight = false;
-        moveUp = false;
-        moveDown = false;
+        moveUp = moveDown = moveLeft = moveRight = false;
     });
 
-    // ... rest of mobile controls setup ...
+    // Setup fire button
+    let fireInterval;
+    
+    fireButton.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        shootLaser();
+        fireInterval = setInterval(shootLaser, 250);
+    }, { passive: false });
+
+    fireButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        if (fireInterval) {
+            clearInterval(fireInterval);
+            fireInterval = null;
+        }
+    }, { passive: false });
+
+    // Prevent default touch behaviors
+    document.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+    }, { passive: false });
 }
 
 // Add fullscreen support
@@ -1317,6 +1342,14 @@ function requestFullScreen(element) {
 window.addEventListener('orientationchange', () => {
     setTimeout(onWindowResize, 100);
 });
+
+function getRandomPlayablePosition() {
+    return {
+        x: Math.random() * 14 - 7,    // Between -7 and 7 (slightly inside edges)
+        y: Math.random() * 5 + 1,     // Between 1 and 6 (playable height)
+        z: -180
+    };
+}
 
 function createShieldPowerup() {
     const group = new THREE.Group();
@@ -1381,10 +1414,9 @@ function createShieldPowerup() {
     group.userData.glowMaterial = glowMaterial;
     group.userData.time = 0;
 
-    // Random position
-    group.position.x = Math.random() * 16 - 8;
-    group.position.y = Math.random() * 6 + 1;
-    group.position.z = -180;
+    // Use new random position function
+    const pos = getRandomPlayablePosition();
+    group.position.set(pos.x, pos.y, pos.z);
 
     return group;
 }
@@ -1556,10 +1588,9 @@ function createWeaponPowerup() {
     group.userData.glowMaterial = glowMaterial;
     group.userData.time = 0;
 
-    // Random position
-    group.position.x = Math.random() * 16 - 8;
-    group.position.y = Math.random() * 6 + 1;
-    group.position.z = -180;
+    // Use new random position function
+    const pos = getRandomPlayablePosition();
+    group.position.set(pos.x, pos.y, pos.z);
 
     return group;
 }
@@ -1708,10 +1739,9 @@ function createHealthPowerup() {
     group.userData.glowMaterial = glowMaterial;
     group.userData.time = 0;
 
-    // Random position
-    group.position.x = Math.random() * 16 - 8;
-    group.position.y = Math.random() * 6 + 1;
-    group.position.z = -180;
+    // Use new random position function
+    const pos = getRandomPlayablePosition();
+    group.position.set(pos.x, pos.y, pos.z);
 
     return group;
 }
