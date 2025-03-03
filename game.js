@@ -36,50 +36,6 @@ let gameStarted = false;
 function init() {
     // Create start screen handler
     document.getElementById('startButton').addEventListener('click', startGame);
-
-    // Create scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    
-    // Create camera
-    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.y = 4;
-    camera.position.z = 12;
-    camera.rotation.x = -0.15;
-    
-    // Create renderer
-    renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-    
-    // Create player (X-wing) with adjusted starting position
-    player = createPlayer();
-    player.position.y = 2;
-    scene.add(player);
-    
-    // Create trench
-    createTrench();
-    
-    // Add lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambientLight);
-    
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    directionalLight.position.set(0, 1, 0);
-    scene.add(directionalLight);
-    
-    // Start game loop
-    animate();
-    
-    // Add event listeners
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
-    window.addEventListener('resize', onWindowResize, false);
-
-    // Setup mobile controls if on mobile device
-    if (isMobile) {
-        setupMobileControls();
-    }
 }
 
 function startGame() {
@@ -97,14 +53,61 @@ function startGame() {
 
     // Initialize game
     setupGame();
-    setupMobileControls();
 }
 
 function setupGame() {
-    // Move all your existing init code here
+    // Create scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    // ... rest of your existing init code ...
+    
+    // Create camera
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.y = 4;
+    camera.position.z = 12;
+    camera.rotation.x = -0.15;
+    
+    // Create renderer
+    renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // Create player
+    player = createPlayer();
+    player.position.y = 2;
+    scene.add(player);
+    
+    // Create trench
+    createTrench();
+    
+    // Add lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(0, 1, 0);
+    scene.add(directionalLight);
+    
+    // Add event listeners
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('resize', onWindowResize, false);
+
+    // Setup mobile controls
+    if (isMobile) {
+        setupMobileControls();
+    }
+
+    // Reset game variables
+    score = 0;
+    playerHealth = 100;
+    gameActive = true;
+    shotsFired = 0;
+    shotsHit = 0;
+    tiesFightersDestroyed = 0;
+    gameStartTime = Date.now();
+
+    // Start game loop
+    animate();
 }
 
 function createTrench() {
@@ -971,17 +974,24 @@ function setupMobileControls() {
     if (!isMobile) return;
 
     // Make controls visible
-    document.getElementById('joystickZone').style.display = 'block';
-    document.getElementById('fireButton').style.display = 'block';
+    const joystickZone = document.getElementById('joystickZone');
+    const fireButton = document.getElementById('fireButton');
+    
+    joystickZone.style.display = 'block';
+    fireButton.style.display = 'block';
 
     // Setup joystick with fixed position
     joystick = nipplejs.create({
-        zone: document.getElementById('joystickZone'),
+        zone: joystickZone,
         mode: 'static',
-        position: { left: '100px', bottom: '100px' },
+        position: { 
+            left: '100px', 
+            bottom: '100px' 
+        },
         color: 'white',
         size: 120,
-        multitouch: true
+        multitouch: true,
+        dynamicPage: true
     });
 
     // Joystick move handler with improved sensitivity
@@ -1004,9 +1014,7 @@ function setupMobileControls() {
         moveUp = moveDown = moveLeft = moveRight = false;
     });
 
-    // Setup fire button with improved touch handling
-    const fireButton = document.getElementById('fireButton');
-    
+    // Setup fire button
     let fireInterval;
     
     fireButton.addEventListener('touchstart', (e) => {
