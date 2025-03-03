@@ -2,8 +2,9 @@
 <html>
 <head>
     <title>X-Wing Trench Run</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        body { margin: 0; }
+        body { margin: 0; overflow: hidden; }
         canvas { display: block; }
         #score {
             position: fixed;
@@ -12,6 +13,7 @@
             color: #fff;
             font-family: Arial, sans-serif;
             font-size: 24px;
+            z-index: 100;
         }
         #health-bar {
             position: fixed;
@@ -22,6 +24,7 @@
             height: 20px;
             background: #333;
             border: 2px solid #666;
+            z-index: 100;
         }
         #health-fill {
             width: 100%;
@@ -29,12 +32,43 @@
             background: #00ff00;
             transition: width 0.2s, background 0.2s;
         }
+        #fireButton {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 0, 0, 0.5);
+            border: 2px solid #ff0000;
+            border-radius: 50%;
+            display: none;
+            z-index: 100;
+            touch-action: none;
+        }
+        #joystickZone {
+            position: fixed;
+            bottom: 40px;
+            left: 40px;
+            width: 120px;
+            height: 120px;
+            display: none;
+            z-index: 100;
+        }
+        /* Only show mobile controls on touch devices */
+        @media (hover: none) and (pointer: coarse) {
+            #fireButton, #joystickZone {
+                display: block;
+            }
+        }
     </style>
 </head>
 <body>
     <div id="score">Score: <span id="scoreValue">0</span></div>
     <div id="health-bar"><div id="health-fill"></div></div>
+    <div id="joystickZone"></div>
+    <div id="fireButton"></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.0/nipplejs.min.js"></script>
     <script src="game.js"></script>
 </body>
 </html> 

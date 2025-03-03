@@ -29,6 +29,8 @@ let shotsFired = 0;
 let shotsHit = 0;
 let tiesFightersDestroyed = 0;
 let gameStartTime = Date.now();
+let joystick = null;
+let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
 function init() {
     // Create scene
@@ -69,6 +71,11 @@ function init() {
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
     window.addEventListener('resize', onWindowResize, false);
+
+    // Setup mobile controls if on mobile device
+    if (isMobile) {
+        setupMobileControls();
+    }
 }
 
 function createTrench() {
@@ -659,13 +666,13 @@ function updatePlayer() {
         player.visible = true;
     }
 
-    // Only process movement if game is active
+    // Update movement
     if (gameActive) {
         const speed = 0.15;
-        if(moveLeft && player.position.x > -8) player.position.x -= speed;
-        if(moveRight && player.position.x < 8) player.position.x += speed;
-        if(moveUp && player.position.y < 7) player.position.y += speed;
-        if(moveDown && player.position.y > 0) player.position.y -= speed;
+        if (moveLeft && player.position.x > -8) player.position.x -= speed;
+        if (moveRight && player.position.x < 8) player.position.x += speed;
+        if (moveUp && player.position.y < 7) player.position.y += speed;
+        if (moveDown && player.position.y > 0) player.position.y -= speed;
     }
 }
 
@@ -930,3 +937,57 @@ function restartGame() {
 
 // Start the game
 init(); 
+
+function setupMobileControls() {
+    // Setup joystick
+    joystick = nipplejs.create({
+        zone: document.getElementById('joystickZone'),
+        mode: 'static',
+        position: { left: '100px', bottom: '100px' },
+        color: 'white',
+        size: 120
+    });
+
+    // Joystick move handler
+    joystick.on('move', (evt, data) => {
+        const forward = data.vector.y;
+        const side = data.vector.x;
+        
+        // Reset all movement flags
+        moveUp = moveDown = moveLeft = moveRight = false;
+        
+        // Set movement based on joystick position
+        if (forward > 0.5) moveUp = true;
+        if (forward < -0.5) moveDown = true;
+        if (side < -0.5) moveLeft = true;
+        if (side > 0.5) moveRight = true;
+    });
+
+    // Joystick end handler
+    joystick.on('end', () => {
+        moveUp = moveDown = moveLeft = moveRight = false;
+    });
+
+    // Setup fire button
+    const fireButton = document.getElementById('fireButton');
+    
+    // Touch handlers for fire button
+    fireButton.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        shootLaser();
+    });
+
+    // Optional: Add continuous firing while holding
+    let fireInterval;
+    fireButton.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        shootLaser();
+        fireInterval = setInterval(shootLaser, 250); // Fire every 250ms while holding
+    });
+
+    fireButton.addEventListener('touchend', () => {
+        if (fireInterval) {
+            clearInterval(fireInterval);
+        }
+    });
+} 
