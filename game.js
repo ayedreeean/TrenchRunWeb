@@ -53,6 +53,12 @@ let timeSinceStart = 0;
 const DIFFICULTY_INCREASE_INTERVAL = 3600; // Increase difficulty every minute (60fps * 60s)
 const MAX_DIFFICULTY = 5;
 const BASE_SPAWN_RATE = 0.01;
+const TILT_ANGLE = Math.PI / 6; // 30 degrees max tilt
+const TILT_SPEED = 0.1; // How fast the ship tilts
+let targetTiltX = 0; // Target roll (left/right tilt)
+let targetTiltZ = 0; // Target pitch (up/down tilt)
+let currentTiltX = 0;
+let currentTiltZ = 0;
 
 function init() {
     // Create start screen handler
@@ -87,7 +93,7 @@ function setupGame() {
     camera.position.z = 12;
     camera.rotation.x = -0.15;
     
-    // Create renderer
+    // Create renderer (original version)
     renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
@@ -766,13 +772,47 @@ function updatePlayer() {
         player.visible = true;
     }
 
-    // Update movement
+    // Update movement and tilting
     if (gameActive) {
         const speed = 0.15;
-        if (moveLeft && player.position.x > -8) player.position.x -= speed;
-        if (moveRight && player.position.x < 8) player.position.x += speed;
-        if (moveUp && player.position.y < 7) player.position.y += speed;
-        if (moveDown && player.position.y > 0) player.position.y -= speed;
+        
+        // Reset target tilts
+        targetTiltZ = 0;
+        targetTiltX = 0;
+
+        // Update position and set target tilts
+        if (moveLeft && player.position.x > -8) {
+            player.position.x -= speed;
+            targetTiltZ = TILT_ANGLE; // Tilt left
+        }
+        if (moveRight && player.position.x < 8) {
+            player.position.x += speed;
+            targetTiltZ = -TILT_ANGLE; // Tilt right
+        }
+        if (moveUp && player.position.y < 7) {
+            player.position.y += speed;
+            targetTiltX = -TILT_ANGLE / 2; // Tilt up (less extreme)
+        }
+        if (moveDown && player.position.y > 0) {
+            player.position.y -= speed;
+            targetTiltX = TILT_ANGLE / 2; // Tilt down (less extreme)
+        }
+
+        // Smoothly interpolate current tilt to target tilt
+        currentTiltZ += (targetTiltZ - currentTiltZ) * TILT_SPEED;
+        currentTiltX += (targetTiltX - currentTiltX) * TILT_SPEED;
+
+        // Apply rotation
+        player.rotation.z = currentTiltZ;
+        player.rotation.x = currentTiltX;
+
+        // Add slight auto-centering when not moving
+        if (!moveLeft && !moveRight) {
+            currentTiltZ *= 0.95;
+        }
+        if (!moveUp && !moveDown) {
+            currentTiltX *= 0.95;
+        }
     }
 
     // Update shield
@@ -1084,10 +1124,11 @@ function animate() {
     // Update jet streams
     jetStreams.forEach(stream => stream.update());
     
-    updatePlayer();  // New player update function
+    updatePlayer();
     updateCameraShake();
     updateExplosions();
     updateGameObjects();
+    
     renderer.render(scene, camera);
 }
 
@@ -1206,6 +1247,14 @@ function restartGame() {
     // Reset difficulty
     difficultyLevel = 1;
     timeSinceStart = 0;
+
+    // Reset tilts
+    currentTiltX = 0;
+    currentTiltZ = 0;
+    targetTiltX = 0;
+    targetTiltZ = 0;
+    player.rotation.z = 0;
+    player.rotation.x = 0;
 }
 
 // Start the game
