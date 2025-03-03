@@ -450,6 +450,23 @@ function createPlayer() {
     // Add wing assembly
     createWings();
 
+    // Create health bar container
+    const healthBarGeometry = new THREE.BoxGeometry(2, 0.1, 0.1);
+    const healthBarMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
+    const healthBarContainer = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
+    healthBarContainer.position.y = -1.3; // Changed from -2 to -1.3 to be above shield bar
+    group.add(healthBarContainer);
+
+    // Create health bar fill
+    const healthBarFillGeometry = new THREE.BoxGeometry(2, 0.1, 0.1);
+    const healthBarFillMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const healthBarFill = new THREE.Mesh(healthBarFillGeometry, healthBarFillMaterial);
+    healthBarFill.position.z = 0.01; // Slightly in front to avoid z-fighting
+    healthBarContainer.add(healthBarFill);
+    
+    // Store reference to health bar for updates
+    group.userData.healthBar = healthBarFill;
+
     return group;
 }
 
@@ -516,10 +533,12 @@ function enemyShoot(enemy) {
 function spawnEnemy() {
     const bounds = getPlayableBounds();
     const enemy = createTieFighter();
+    
     // Spawn within visible bounds
     enemy.position.x = (Math.random() * (bounds.x * 1.8)) - (bounds.x * 0.9);
     enemy.position.y = Math.random() * bounds.y;
     enemy.position.z = -180;
+    
     enemies.push(enemy);
     scene.add(enemy);
 }
@@ -750,16 +769,27 @@ function playerHit(damage = 20) {
 }
 
 function updateHealthBar() {
-    const healthFill = document.getElementById('health-fill');
-    healthFill.style.width = `${playerHealth}%`;
-    
-    // Change color based on health
-    if (playerHealth > 60) {
-        healthFill.style.background = '#00ff00';  // Green
-    } else if (playerHealth > 30) {
-        healthFill.style.background = '#ffff00';  // Yellow
-    } else {
-        healthFill.style.background = '#ff0000';  // Red
+    // Update 3D health bar
+    if (player.userData.healthBar) {
+        const percentage = playerHealth / 100;
+        player.userData.healthBar.scale.x = percentage;
+        // Center the fill bar as it scales
+        player.userData.healthBar.position.x = -1 * (1 - percentage);
+
+        // Update color based on health
+        if (playerHealth > 60) {
+            player.userData.healthBar.material.color.setHex(0x00ff00);  // Green
+        } else if (playerHealth > 30) {
+            player.userData.healthBar.material.color.setHex(0xffff00);  // Yellow
+        } else {
+            player.userData.healthBar.material.color.setHex(0xff0000);  // Red
+        }
+    }
+
+    // Remove the HTML health bar
+    const htmlHealthBar = document.getElementById('health-bar');
+    if (htmlHealthBar) {
+        htmlHealthBar.style.display = 'none';
     }
 }
 
@@ -903,30 +933,33 @@ function updateGameObjects() {
     // Keep enemies within bounds and update their movement
     const bounds = getPlayableBounds();
     for(let i = enemies.length - 1; i >= 0; i--) {
-        // Move forward
-        enemies[i].position.z += 0.56;  // Forward movement speed
+        const enemy = enemies[i];
+        
+        // Move forward in a straight line
+        const forwardSpeed = 0.56;
+        enemy.position.z += forwardSpeed;
         
         // Clamp enemy positions to bounds
-        enemies[i].position.x = Math.max(-bounds.x * 0.9, Math.min(bounds.x * 0.9, enemies[i].position.x));
-        enemies[i].position.y = Math.max(0, Math.min(bounds.y, enemies[i].position.y));
+        enemy.position.x = Math.max(-bounds.x * 0.9, Math.min(bounds.x * 0.9, enemy.position.x));
+        enemy.position.y = Math.max(0, Math.min(bounds.y, enemy.position.y));
         
         // Random chance to shoot when in range (increased from 0.01 to 0.015)
-        if(enemies[i].position.z > -100 && Math.random() < 0.015) {
-            enemyShoot(enemies[i]);
+        if(enemy.position.z > -100 && Math.random() < 0.015) {
+            enemyShoot(enemy);
         }
 
-        if(enemies[i].position.z > 10) {
-            scene.remove(enemies[i]);
+        if(enemy.position.z > 10) {
+            scene.remove(enemy);
             enemies.splice(i, 1);
             continue;
         }
         
         // Check collision with player
-        if(checkCollision(enemies[i], player)) {
+        if(checkCollision(enemy, player)) {
             if (shieldActive) {
                 // If shielded, destroy the TIE fighter and count it as a kill
-                createExplosion(enemies[i].position.clone());
-                scene.remove(enemies[i]);
+                createExplosion(enemy.position.clone());
+                scene.remove(enemy);
                 enemies.splice(i, 1);
                 score += 100;
                 tiesFightersDestroyed++;
@@ -936,8 +969,8 @@ function updateGameObjects() {
             } else {
                 // Normal collision damage when not shielded
                 playerHit(35);  // Collision does 35 damage
-                createExplosion(enemies[i].position.clone());
-                scene.remove(enemies[i]);
+                createExplosion(enemy.position.clone());
+                scene.remove(enemy);
                 enemies.splice(i, 1);
                 continue;
             }
@@ -945,9 +978,9 @@ function updateGameObjects() {
 
         // Add back laser hit detection
         for(let j = lasers.length - 1; j >= 0; j--) {
-            if(checkCollision(enemies[i], lasers[j])) {
-                createExplosion(enemies[i].position.clone());
-                scene.remove(enemies[i]);
+            if(checkCollision(enemy, lasers[j])) {
+                createExplosion(enemy.position.clone());
+                scene.remove(enemy);
                 scene.remove(lasers[j]);
                 enemies.splice(i, 1);
                 lasers.splice(j, 1);
