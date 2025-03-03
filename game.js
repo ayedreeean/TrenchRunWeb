@@ -900,9 +900,12 @@ function updateGameObjects() {
         spawnEnemy();
     }
     
-    // Keep enemies within bounds
+    // Keep enemies within bounds and update their movement
     const bounds = getPlayableBounds();
     for(let i = enemies.length - 1; i >= 0; i--) {
+        // Move forward
+        enemies[i].position.z += 0.56;  // Forward movement speed
+        
         // Clamp enemy positions to bounds
         enemies[i].position.x = Math.max(-bounds.x * 0.9, Math.min(bounds.x * 0.9, enemies[i].position.x));
         enemies[i].position.y = Math.max(0, Math.min(bounds.y, enemies[i].position.y));
