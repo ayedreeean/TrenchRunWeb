@@ -2202,13 +2202,13 @@ function createExhaustPorts() {
     // Add a visible target point (exhaust port) closer
     const targetGeometry = new THREE.RingGeometry(0.5, 0.8, 32);
     const targetMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff0000,
+        color: 0xffffff,  // Changed from 0xff0000 to 0xffffff
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 0.8
     });
     const targetRing = new THREE.Mesh(targetGeometry, targetMaterial);
-    targetRing.position.set(0, 0.1, -60); // Moved from -100 to -60
+    targetRing.position.set(0, 0.1, -60);
     targetRing.rotation.x = -Math.PI / 2;
     scene.add(targetRing);
     exhaustPorts.target = targetRing;
@@ -2278,7 +2278,7 @@ function createBombMessage() {
         z-index: 1000;
         pointer-events: none;
     `;
-    bombMessage.textContent = "Exhaust port exposed! Fire your proton torpedo when the planes meet!";
+    bombMessage.textContent = "Exhaust port exposed! Fire your proton torpedo when the planes meet! You only have 1 SHOT!";
     document.body.appendChild(bombMessage);
 }
 
