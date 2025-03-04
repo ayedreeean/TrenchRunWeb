@@ -62,6 +62,11 @@ let targetTiltX = 0; // Target roll (left/right tilt)
 let targetTiltZ = 0; // Target pitch (up/down tilt)
 let currentTiltX = 0;
 let currentTiltZ = 0;
+let missionTimer = 30 * 60; // 30 seconds at 60fps
+let missionPhase = 'normal'; // 'normal' or 'exhaust'
+let exhaustPortsActive = false;
+let exhaustPorts = { left: null, right: null, target: null, hole: null };
+let canFireBomb = false;
 
 // Update the bounds constants to be more restrictive
 const DESKTOP_BOUNDS = {
@@ -80,8 +85,82 @@ const MOBILE_BOUNDS = {
     }
 };
 
+// Add these variables at the top with other globals
+let bombWindow = false;
+let bombWindowTimer = 0;
+const BOMB_WINDOW_DURATION = 100; // 100ms window to fire
+let bombMessage = null;
+
+// Add to global variables at top
+let bombSuccessful = false;
+
+// Add to global variables
+let cameraFollowingBomb = false;
+let bombToFollow = null;
+let originalCameraPos = null;
+let originalCameraRot = null;
+
+// Add to global variables at top
+let bombingSequenceActive = false;
+
+// Add to global variables at top
+let distanceText = null;
+
+// Add TIE fighter count tracking
+const REQUIRED_TIE_FIGHTERS = 5;
+
+// Add new state variables at the top
+let exhaustInstructionsShown = false;
+let exhaustInstructionsTimer = 180; // 3 seconds at 60fps
+let canFireExhaustShot = false;
+let exhaustShotMissed = false;
+
+// Add to global variables at top
+let instructionMessage = null;
+let actionMessage = null;
+
+// Add this variable at the top with other globals
+let animationFrameId;
+
+// Add these variables at the top
+let normalPhaseTimer = 7200; // 120 seconds at 60fps
+let normalPhaseTimerBar = null;
+
+// Add this variable at the top with other globals
+let hasShot = false;
+
+// Add this function to create the timer bar
+function createNormalPhaseTimer() {
+    // Create container - make it wider
+    const timerContainer = new THREE.Mesh(
+        new THREE.BoxGeometry(16, 0.2, 0.1),  // Doubled width from 8 to 16
+        new THREE.MeshBasicMaterial({ color: 0x333333 })
+    );
+    timerContainer.position.set(0, 9.5, -5);  // Moved up from 9 to 9.5
+    scene.add(timerContainer);
+
+    // Create timer fill - match container width
+    normalPhaseTimerBar = new THREE.Mesh(
+        new THREE.BoxGeometry(16, 0.2, 0.1),  // Doubled width from 8 to 16
+        new THREE.MeshBasicMaterial({ color: 0xffff00 })
+    );
+    normalPhaseTimerBar.position.z = 0.01; // Slightly in front
+    timerContainer.add(normalPhaseTimerBar);
+}
+
 function init() {
-    // Create start screen handler
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 4, 12);
+    camera.rotation.x = -0.15;
+    
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // Add start screen handler
     document.getElementById('startButton').addEventListener('click', startGame);
 }
 
@@ -100,23 +179,19 @@ function startGame() {
 
     // Initialize game
     setupGame();
+    
+    // Create timer bar after game is set up
+    createTimerBar();
+    
+    // Start the main game loop
+    requestAnimationFrame(animate);
 }
 
 function setupGame() {
-    // Create scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    
-    // Create camera
-    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.y = 4;
-    camera.position.z = 12;
-    camera.rotation.x = -0.15;
-    
-    // Create renderer (original version)
-    renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+    // Remove any existing event listeners first
+    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keyup', handleKeyUp);
+    window.removeEventListener('resize', onWindowResize);
     
     // Create player
     player = createPlayer();
@@ -130,11 +205,11 @@ function setupGame() {
     // Create trench
     createTrench();
     
-    // Add lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    // Add lights with increased intensity
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
     scene.add(ambientLight);
     
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(0, 1, 0);
     scene.add(directionalLight);
     
@@ -154,9 +229,9 @@ function setupGame() {
     shotsHit = 0;
     tiesFightersDestroyed = 0;
     gameStartTime = Date.now();
-
-    // Start game loop
-    animate();
+    missionPhase = 'normal';
+    
+    createNormalPhaseTimer();
 }
 
 function createTrench() {
@@ -285,49 +360,85 @@ function handleKeyUp(event) {
 function shootLaser() {
     if (!gameActive) return;
     
-    shotsFired++;
-    
-    const createSingleLaser = (xOffset) => {
-        // Always use green color, just vary the size based on upgrade
-        const laserGeometry = weaponUpgradeActive ? 
-            new THREE.BoxGeometry(0.3, 0.3, 5.0) :  // Slightly larger when upgraded
-            new THREE.BoxGeometry(0.2, 0.2, 4.0);
+    if (missionPhase === 'exhaust') {
+        if (!exhaustInstructionsShown) return; // Prevent firing during instructions
+        if (exhaustShotMissed) return; // Prevent firing after a miss
+        if (hasShot) return; // Only allow one shot
         
-        const laserMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0x00ff00,  // Always green
-            transparent: weaponUpgradeActive,
-            opacity: weaponUpgradeActive ? 0.9 : 1
+        // Set the flag to prevent more shots
+        hasShot = true;
+        
+        // Create yellow laser
+        const bombGeometry = new THREE.BoxGeometry(0.4, 0.4, 2.0);
+        const bombMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffff00,
+            transparent: true,
+            opacity: 0.9
         });
+        const bomb = new THREE.Mesh(bombGeometry, bombMaterial);
+        bomb.position.copy(player.position);
+        bomb.position.z -= 2;
+        bomb.userData.isBomb = true;
+        lasers.push(bomb);
+        scene.add(bomb);
         
-        const laser = new THREE.Mesh(laserGeometry, laserMaterial);
-        laser.position.copy(player.position);
-        laser.position.x += xOffset;
-        laser.position.z -= weaponUpgradeActive ? 2.5 : 2;
-        laser.userData.upgraded = weaponUpgradeActive;
-        lasers.push(laser);
-        scene.add(laser);
-    };
+        // Check if shot was fired at the right time
+        if (canFireExhaustShot) {
+            // Start successful bombing sequence
+            bombingSequenceActive = true;
+            bombToFollow = bomb;
+        } else {
+            // Shot will miss
+            exhaustShotMissed = true;
+            setTimeout(() => {
+                createMissedShotGameOver();
+            }, 2000);
+        }
+    } else {
+        shotsFired++;
+        
+        const createSingleLaser = (xOffset) => {
+            // Always use green color, just vary the size based on upgrade
+            const laserGeometry = weaponUpgradeActive ? 
+                new THREE.BoxGeometry(0.3, 0.3, 5.0) :  // Slightly larger when upgraded
+                new THREE.BoxGeometry(0.2, 0.2, 4.0);
+            
+            const laserMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00,  // Always green
+                transparent: weaponUpgradeActive,
+                opacity: weaponUpgradeActive ? 0.9 : 1
+            });
+            
+            const laser = new THREE.Mesh(laserGeometry, laserMaterial);
+            laser.position.copy(player.position);
+            laser.position.x += xOffset;
+            laser.position.z -= weaponUpgradeActive ? 2.5 : 2;
+            laser.userData.upgraded = weaponUpgradeActive;
+            lasers.push(laser);
+            scene.add(laser);
+        };
 
-    // Calculate offsets based on weapon level with wider spacing
-    switch(weaponLevel) {
-        case 1:
-            createSingleLaser(0); // Single center beam
-            break;
-        case 2:
-            createSingleLaser(-0.75); // Left beam (wider gap)
-            createSingleLaser(0.75);  // Right beam
-            break;
-        case 3:
-            createSingleLaser(-1.5);   // Left beam
-            createSingleLaser(0);      // Center beam
-            createSingleLaser(1.5);    // Right beam
-            break;
-        case 4:
-            createSingleLaser(-2.25);  // Far left beam
-            createSingleLaser(-0.75);  // Inner left beam
-            createSingleLaser(0.75);   // Inner right beam
-            createSingleLaser(2.25);   // Far right beam
-            break;
+        // Calculate offsets based on weapon level with wider spacing
+        switch(weaponLevel) {
+            case 1:
+                createSingleLaser(0); // Single center beam
+                break;
+            case 2:
+                createSingleLaser(-0.75); // Left beam (wider gap)
+                createSingleLaser(0.75);  // Right beam
+                break;
+            case 3:
+                createSingleLaser(-1.5);   // Left beam
+                createSingleLaser(0);      // Center beam
+                createSingleLaser(1.5);    // Right beam
+                break;
+            case 4:
+                createSingleLaser(-2.25);  // Far left beam
+                createSingleLaser(-0.75);  // Inner left beam
+                createSingleLaser(0.75);   // Inner right beam
+                createSingleLaser(2.25);   // Far right beam
+                break;
+        }
     }
 }
 
@@ -888,20 +999,54 @@ function updatePlayer() {
 }
 
 function updateGameObjects() {
-    if (!gameActive) return;  // Don't update if game is over
-    
+    if (!gameActive) return;
+
     // Update game time and difficulty
     timeSinceStart++;
     if (timeSinceStart % DIFFICULTY_INCREASE_INTERVAL === 0) {
         difficultyLevel = Math.min(difficultyLevel + 1, MAX_DIFFICULTY);
     }
     
-    // Calculate current spawn rate based on difficulty
-    const currentSpawnRate = BASE_SPAWN_RATE * (1 + (difficultyLevel - 1) * 0.3);
+    // Only spawn new TIE fighters and powerups if not in exhaust phase
+    if (missionPhase === 'normal') {
+        // Spawn TIE fighters
+        const currentSpawnRate = BASE_SPAWN_RATE * (1 + (difficultyLevel - 1) * 0.3);
+        if(Math.random() < currentSpawnRate) {
+            spawnEnemy();
+        }
+
+        // Spawn shield powerups occasionally
+        if (Math.random() < 0.0006) {
+            const shieldPowerup = createShieldPowerup();
+            shieldPowerups.push(shieldPowerup);
+            scene.add(shieldPowerup);
+        }
+
+        // Spawn weapon powerups occasionally
+        if (Math.random() < 0.0004) {
+            const weaponPowerup = createWeaponPowerup();
+            weaponPowerups.push(weaponPowerup);
+            scene.add(weaponPowerup);
+        }
+
+        // Spawn health powerups occasionally
+        if (Math.random() < 0.0003) {
+            const healthPowerup = createHealthPowerup();
+            healthPowerups.push(healthPowerup);
+            scene.add(healthPowerup);
+        }
+    }
     
     // Update player lasers
     for(let i = lasers.length - 1; i >= 0; i--) {
-        lasers[i].position.z -= 2;
+        if (lasers[i].userData.isBomb) {
+            // Much slower speed for bomb laser
+            lasers[i].position.z -= 0.15; // Reduced from 0.3 to 0.15 for initial approach
+        } else {
+            // Normal laser speed
+            lasers[i].position.z -= 2;
+        }
+        
         if(lasers[i].position.z < -200) {
             scene.remove(lasers[i]);
             lasers.splice(i, 1);
@@ -923,11 +1068,6 @@ function updateGameObjects() {
             enemyLasers.splice(i, 1);
             continue;
         }
-    }
-    
-    // Update enemies with scaled spawn rate
-    if(Math.random() < currentSpawnRate) {
-        spawnEnemy();
     }
     
     // Keep enemies within bounds and update their movement
@@ -993,78 +1133,7 @@ function updateGameObjects() {
         }
     }
 
-    // Spawn shield powerups occasionally (reduced frequency)
-    if (Math.random() < 0.0006) { // Reduced from 0.0012 to 0.0006 (50% less frequent)
-        const shieldPowerup = createShieldPowerup();
-        shieldPowerups.push(shieldPowerup);
-        scene.add(shieldPowerup);
-    }
-    
-    // Update shield powerups
-    for (let i = shieldPowerups.length - 1; i >= 0; i--) {
-        shieldPowerups[i].position.z += 0.56;
-        shieldPowerups[i].rotation.y += shieldPowerups[i].userData.rotationSpeed;
-        
-        // Update glow effect
-        shieldPowerups[i].userData.time += 0.016;
-        shieldPowerups[i].userData.glowMaterial.uniforms.time.value = shieldPowerups[i].userData.time;
-        
-        // Remove if too far
-        if (shieldPowerups[i].position.z > 10) {
-            scene.remove(shieldPowerups[i]);
-            shieldPowerups.splice(i, 1);
-            continue;
-        }
-        
-        // Check collision with player using more forgiving check
-        if (checkPowerupCollision(shieldPowerups[i], player)) {
-            createPickupAnimation(shieldPowerups[i].position.clone(), 0x00ffff); // Cyan color for shield
-            activateShield();
-            scene.remove(shieldPowerups[i]);
-            shieldPowerups.splice(i, 1);
-        }
-    }
-
-    // Spawn weapon powerups occasionally (reduced frequency)
-    if (Math.random() < 0.0006) { // Reduced from 0.0012 to 0.0006 (50% less frequent)
-        const weaponPowerup = createWeaponPowerup();
-        weaponPowerups.push(weaponPowerup);
-        scene.add(weaponPowerup);
-    }
-    
-    // Update weapon powerups
-    for (let i = weaponPowerups.length - 1; i >= 0; i--) {
-        weaponPowerups[i].position.z += 0.56;
-        weaponPowerups[i].rotation.y += weaponPowerups[i].userData.rotationSpeed;
-        
-        // Update glow effect
-        weaponPowerups[i].userData.time += 0.016;
-        weaponPowerups[i].userData.glowMaterial.uniforms.time.value = weaponPowerups[i].userData.time;
-        
-        // Remove if too far
-        if (weaponPowerups[i].position.z > 10) {
-            scene.remove(weaponPowerups[i]);
-            weaponPowerups.splice(i, 1);
-            continue;
-        }
-        
-        // Check collision with player using more forgiving check
-        if (checkPowerupCollision(weaponPowerups[i], player)) {
-            createPickupAnimation(weaponPowerups[i].position.clone(), 0xff0000); // Red color for weapon
-            activateWeaponUpgrade();
-            scene.remove(weaponPowerups[i]);
-            weaponPowerups.splice(i, 1);
-        }
-    }
-
-    // Spawn health powerups occasionally (same rate as other powerups)
-    if (Math.random() < 0.0006) {
-        const healthPowerup = createHealthPowerup();
-        healthPowerups.push(healthPowerup);
-        scene.add(healthPowerup);
-    }
-    
-    // Update health powerups
+    // Spawn health powerups
     for (let i = healthPowerups.length - 1; i >= 0; i--) {
         healthPowerups[i].position.z += 0.56;
         healthPowerups[i].rotation.y += healthPowerups[i].userData.rotationSpeed;
@@ -1086,6 +1155,56 @@ function updateGameObjects() {
             activateHealthPowerup();
             scene.remove(healthPowerups[i]);
             healthPowerups.splice(i, 1);
+        }
+    }
+
+    // Update shield powerups
+    for (let i = shieldPowerups.length - 1; i >= 0; i--) {
+        shieldPowerups[i].position.z += 0.56;
+        shieldPowerups[i].rotation.y += shieldPowerups[i].userData.rotationSpeed;
+        
+        // Update glow effect
+        shieldPowerups[i].userData.time += 0.016;
+        shieldPowerups[i].userData.glowMaterial.uniforms.time.value = shieldPowerups[i].userData.time;
+        
+        // Remove if too far
+        if (shieldPowerups[i].position.z > 10) {
+            scene.remove(shieldPowerups[i]);
+            shieldPowerups.splice(i, 1);
+            continue;
+        }
+        
+        // Check collision with player
+        if (checkPowerupCollision(shieldPowerups[i], player)) {
+            createPickupAnimation(shieldPowerups[i].position.clone(), 0x00ffff);
+            activateShield();
+            scene.remove(shieldPowerups[i]);
+            shieldPowerups.splice(i, 1);
+        }
+    }
+
+    // Update weapon powerups
+    for (let i = weaponPowerups.length - 1; i >= 0; i--) {
+        weaponPowerups[i].position.z += 0.56;
+        weaponPowerups[i].rotation.y += weaponPowerups[i].userData.rotationSpeed;
+        
+        // Update glow effect
+        weaponPowerups[i].userData.time += 0.016;
+        weaponPowerups[i].userData.glowMaterial.uniforms.time.value = weaponPowerups[i].userData.time;
+        
+        // Remove if too far
+        if (weaponPowerups[i].position.z > 10) {
+            scene.remove(weaponPowerups[i]);
+            weaponPowerups.splice(i, 1);
+            continue;
+        }
+        
+        // Check collision with player
+        if (checkPowerupCollision(weaponPowerups[i], player)) {
+            createPickupAnimation(weaponPowerups[i].position.clone(), 0xff0000);
+            activateWeaponUpgrade();
+            scene.remove(weaponPowerups[i]);
+            weaponPowerups.splice(i, 1);
         }
     }
 
@@ -1178,8 +1297,79 @@ function createJetStream(position, parentObject) {
 }
 
 function animate() {
-    requestAnimationFrame(animate);
+    if (!gameActive) {
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+        return;
+    }
     
+    animationFrameId = requestAnimationFrame(animate);
+    
+    // Update normal phase timer and spawn enemies
+    if (missionPhase === 'normal' && normalPhaseTimer > 0) {
+        // Update timer bar
+        normalPhaseTimer--;
+        if (normalPhaseTimerBar) {
+            normalPhaseTimerBar.scale.x = normalPhaseTimer / 7200;  // Updated from 600 to 7200
+            normalPhaseTimerBar.position.x = -8 * (1 - normalPhaseTimer / 7200);  // Updated from 600 to 7200
+        }
+        
+        // Spawn enemies during normal phase
+        if (Math.random() < BASE_SPAWN_RATE * difficultyLevel) {
+            spawnEnemy();
+        }
+        
+        // Start exhaust port mission when timer runs out
+        if (normalPhaseTimer <= 0) {
+            missionPhase = 'exhaust';
+            exhaustPortsActive = true;
+            createExhaustPorts();
+            createBombMessage();
+            // Stop enemy spawns when exhaust ports appear
+            enemies.forEach(enemy => scene.remove(enemy));
+            enemies = [];
+            enemyLasers.forEach(laser => scene.remove(laser));
+            enemyLasers = [];
+        }
+    }
+
+    // Handle exhaust port movement
+    if (exhaustPortsActive && !bombingSequenceActive) {
+        if (!exhaustInstructionsShown) {
+            exhaustInstructionsTimer--;
+            if (exhaustInstructionsTimer <= 0) {
+                exhaustInstructionsShown = true;
+                if (instructionMessage) {
+                    instructionMessage.style.opacity = '0';
+                    setTimeout(() => {
+                        if (instructionMessage) document.body.removeChild(instructionMessage);
+                        if (actionMessage) actionMessage.style.opacity = '1';
+                    }, 1000);
+                }
+            }
+        } else if (!bombingSequenceActive && !exhaustShotMissed) {
+            const moveSpeed = 0.02;
+            if (exhaustPorts.left) exhaustPorts.left.position.x += moveSpeed;
+            if (exhaustPorts.right) exhaustPorts.right.position.x -= moveSpeed;
+            
+            if (exhaustPorts.left && exhaustPorts.right) {
+                const portDistance = Math.abs(exhaustPorts.right.position.x - exhaustPorts.left.position.x);
+                if (portDistance <= 2) {
+                    canFireExhaustShot = true;
+                    exhaustPorts.left.material.uniforms.color.value.setHex(0xff0000);
+                    exhaustPorts.right.material.uniforms.color.value.setHex(0xff0000);
+                    if (actionMessage) {
+                        actionMessage.textContent = "FIRE NOW!";
+                        actionMessage.style.color = "#ff0000";
+                        actionMessage.style.fontSize = "32px";
+                    }
+                }
+            }
+        }
+    }
+
     // Update time for grid animation
     time += 0.01;
     if (trench) {
@@ -1189,15 +1379,83 @@ function animate() {
             }
         });
     }
-    
-    // Update jet streams
-    jetStreams.forEach(stream => stream.update());
-    
+
+    // Update game objects
     updatePlayer();
     updateCameraShake();
     updateExplosions();
     updateGameObjects();
-    
+
+    // Handle bomb laser sequence
+    if (bombToFollow) {
+        const targetX = exhaustPorts.target.position.x;
+        const deltaX = targetX - bombToFollow.position.x;
+        
+        if (Math.abs(deltaX) > 0.1) {
+            bombToFollow.position.x += Math.sign(deltaX) * 0.03;
+        }
+        
+        bombToFollow.position.z -= 0.004;
+
+        const distanceToTarget = Math.abs(bombToFollow.position.z - exhaustPorts.target.position.z);
+        if (distanceToTarget < 0.2 && Math.abs(bombToFollow.position.x - targetX) < 0.2) {
+            bombToFollow.position.x = targetX;
+            bombToFollow.position.z = exhaustPorts.target.position.z;
+            bombToFollow.rotation.x = -Math.PI / 2;
+            bombToFollow.position.y = Math.max(0, bombToFollow.position.y - 0.1);
+
+            if (bombToFollow.position.y <= 0.1) {
+                scene.remove(bombToFollow);
+                const index = lasers.indexOf(bombToFollow);
+                if (index > -1) {
+                    lasers.splice(index, 1);
+                }
+                bombToFollow = null;
+
+                setTimeout(() => {
+                    const explosionPosition = exhaustPorts.target.position.clone();
+                    explosionPosition.y = 0.1;
+                    const explosion = createPortExplosion(explosionPosition);
+                    explosion.position.copy(explosionPosition);
+                    explosion.scale.multiplyScalar(2);
+                    
+                    score += 5000;
+                    document.getElementById('scoreValue').textContent = score;
+
+                    setTimeout(() => {
+                        createVictoryScreen();
+                    }, 4000);
+                }, 1000);
+            }
+        }
+    }
+
+    // Update explosion particles
+    scene.children.forEach(child => {
+        if (child.isGroup && child.children[0]?.userData.life !== undefined) {
+            child.children.forEach(particle => {
+                if (particle.userData.velocity) {
+                    particle.position.add(particle.userData.velocity);
+                    if (particle.userData.rotationSpeed) {
+                        particle.rotation.x += particle.userData.rotationSpeed.x;
+                        particle.rotation.y += particle.userData.rotationSpeed.y;
+                        particle.rotation.z += particle.userData.rotationSpeed.z;
+                    }
+                    particle.userData.life -= particle.userData.fadeRate;
+                    particle.material.opacity = Math.max(0, particle.userData.life);
+                    
+                    if (particle.material.color.getHex() !== 0xffffff) {
+                        particle.scale.multiplyScalar(1.02);
+                    }
+                }
+            });
+
+            if (child.children.every(particle => particle.userData.life <= 0)) {
+                scene.remove(child);
+            }
+        }
+    });
+
     renderer.render(scene, camera);
 }
 
@@ -1256,73 +1514,105 @@ function createGameOverScreen() {
 }
 
 function restartGame() {
+    // First, remove all event listeners
+    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keyup', handleKeyUp);
+    window.removeEventListener('resize', onWindowResize);
+    
+    // Stop the animation loop
+    gameActive = false;
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+
     // Remove game over screen
     const overlay = document.getElementById('gameOverOverlay');
     if (overlay) {
         document.body.removeChild(overlay);
     }
+
+    // Clean up UI elements
+    if (instructionMessage) {
+        document.body.removeChild(instructionMessage);
+        instructionMessage = null;
+    }
+    if (actionMessage) {
+        document.body.removeChild(actionMessage);
+        actionMessage = null;
+    }
+    if (bombMessage) {
+        document.body.removeChild(bombMessage);
+        bombMessage = null;
+    }
+
+    // Remove the renderer's canvas
+    if (renderer && renderer.domElement) {
+        document.body.removeChild(renderer.domElement);
+    }
+
+    // Reset all game variables
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
     
-    // Reset game variables
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 4, 12);
+    camera.rotation.x = -0.15;
+    
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Reset game state
     score = 0;
     playerHealth = 100;
-    gameActive = true;
     shotsFired = 0;
     shotsHit = 0;
     tiesFightersDestroyed = 0;
     gameStartTime = Date.now();
+    missionPhase = 'normal';
+    bombingSequenceActive = false;
+    exhaustPortsActive = false;
+    exhaustPorts = { left: null, right: null, target: null, hole: null };
+    moveLeft = moveRight = moveUp = moveDown = false;
+    shieldActive = false;
+    weaponUpgradeActive = false;
+    weaponLevel = 1;
+    exhaustInstructionsShown = false;
+    exhaustInstructionsTimer = 180;
+    canFireExhaustShot = false;
+    exhaustShotMissed = false;
     
-    // Reset player position
-    player.position.set(0, 2, 0);
-    
-    // Clear all existing enemies and lasers
-    enemies.forEach(enemy => scene.remove(enemy));
+    // Reset arrays
     enemies = [];
-    lasers.forEach(laser => scene.remove(laser));
     lasers = [];
-    enemyLasers.forEach(laser => scene.remove(laser));
     enemyLasers = [];
-    
+    explosions = [];
+    shieldPowerups = [];
+    weaponPowerups = [];
+    healthPowerups = [];
+    jetStreams = [];
+
     // Reset UI
     document.getElementById('scoreValue').textContent = '0';
-    updateHealthBar();
 
-    shieldActive = false;
-    shieldTime = 0;
-    if (shieldEffect) shieldEffect.visible = false;
-    if (shieldBarContainer) shieldBarContainer.visible = false;
-    
-    // Remove the HTML shield bar references
-    const shieldBar = document.getElementById('shield-bar');
-    if (shieldBar) {
-        shieldBar.remove();
+    // Setup game
+    setupGame();
+
+    // Set game states
+    gameActive = true;
+    gameStarted = true;
+
+    // Start a new animation loop
+    animate();
+
+    normalPhaseTimer = 7200;  // Reset to 120 seconds
+    if (normalPhaseTimerBar) {
+        normalPhaseTimerBar.scale.x = 1;
+        normalPhaseTimerBar.position.x = 0;
     }
-    
-    // Clear shield powerups
-    shieldPowerups.forEach(powerup => scene.remove(powerup));
-    shieldPowerups = [];
 
-    weaponUpgradeActive = false;
-    weaponUpgradeTime = 0;
-    weaponLevel = 1; // Reset weapon level
-    
-    // Clear weapon powerups
-    weaponPowerups.forEach(powerup => scene.remove(powerup));
-    weaponPowerups = [];
-
-    // Clear health powerups
-    healthPowerups.forEach(powerup => scene.remove(powerup));
-    healthPowerups = [];
-
-    // Reset difficulty
-    difficultyLevel = 1;
-    timeSinceStart = 0;
-
-    // Reset tilts and player rotation
-    currentTiltX = 0;
-    currentTiltZ = 0;
-    targetTiltX = 0;
-    targetTiltZ = 0;
-    player.rotation.set(0, 0, 0);
+    hasShot = false;  // Reset the shot flag
 }
 
 // Start the game
@@ -1843,4 +2133,331 @@ function getPlayableBounds() {
     return window.innerHeight > window.innerWidth ? 
         MOBILE_BOUNDS.portrait : 
         MOBILE_BOUNDS.landscape;
-} 
+}
+
+// Add this function to create the timer bar
+function createTimerBar() {
+    const loader = new THREE.FontLoader();
+    loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (font) {
+        const textGeometry = new THREE.TextGeometry('DISTANCE TO TARGET', {
+            font: font,
+            size: 0.5,
+            height: 0.1
+        });
+        const textMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        distanceText = new THREE.Mesh(textGeometry, textMaterial);
+        
+        // Center the text and position it below the timer bar
+        textGeometry.computeBoundingBox();
+        const textWidth = textGeometry.boundingBox.max.x - textGeometry.boundingBox.min.x;
+        distanceText.position.set(-textWidth/2, 8.5, -5);  // Moved down from 9 to 8.5
+        distanceText.renderOrder = 999;
+        scene.add(distanceText);
+    });
+}
+
+// Add this function to create exhaust ports with grid pattern
+function createExhaustPorts() {
+    // Create simpler grid material
+    const gridMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            color: { value: new THREE.Color(0xffff00) }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 color;
+            varying vec2 vUv;
+            void main() {
+                float gridSize = 0.2;
+                vec2 grid = fract(vUv / gridSize);
+                float line = step(0.8, grid.x) + step(0.8, grid.y);
+                gl_FragColor = vec4(color, line * 0.8);
+            }
+        `,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+
+    // Create port geometry - sized to match X-wing width
+    const portGeometry = new THREE.PlaneGeometry(3, 3);
+    
+    // Create left port
+    exhaustPorts.left = new THREE.Mesh(portGeometry, gridMaterial.clone());
+    exhaustPorts.left.position.set(-8, 1, -5);
+    exhaustPorts.left.rotation.y = Math.PI / 2;
+    player.add(exhaustPorts.left);
+    
+    // Create right port
+    exhaustPorts.right = new THREE.Mesh(portGeometry, gridMaterial.clone());
+    exhaustPorts.right.position.set(8, 1, -5);
+    exhaustPorts.right.rotation.y = Math.PI / 2;
+    player.add(exhaustPorts.right);
+
+    // Add a visible target point (exhaust port) closer
+    const targetGeometry = new THREE.RingGeometry(0.5, 0.8, 32);
+    const targetMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.8
+    });
+    const targetRing = new THREE.Mesh(targetGeometry, targetMaterial);
+    targetRing.position.set(0, 0.1, -60); // Moved from -100 to -60
+    targetRing.rotation.x = -Math.PI / 2;
+    scene.add(targetRing);
+    exhaustPorts.target = targetRing;
+
+    // Add a dark hole inside the target ring
+    const holeGeometry = new THREE.CircleGeometry(0.5, 32);
+    const holeMaterial = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        side: THREE.DoubleSide
+    });
+    const hole = new THREE.Mesh(holeGeometry, holeMaterial);
+    hole.position.copy(targetRing.position);
+    hole.rotation.x = -Math.PI / 2;
+    scene.add(hole);
+    exhaustPorts.hole = hole;
+
+    // Show initial instructions
+    instructionMessage = document.createElement('div');
+    instructionMessage.style.cssText = `
+        position: fixed;
+        top: 40%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #ffff00;
+        font-family: Arial, sans-serif;
+        font-size: 24px;
+        text-align: center;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        z-index: 1000;
+        pointer-events: none;
+    `;
+
+
+    // Create action message (hidden initially)
+    actionMessage = document.createElement('div');
+    actionMessage.style.cssText = `
+        position: fixed;
+        top: 60%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #ffff00;
+        font-family: Arial, sans-serif;
+        font-size: 24px;
+        text-align: center;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        z-index: 1000;
+        pointer-events: none;
+        opacity: 0;
+    `;
+    actionMessage.textContent = "Fire when the planes align and turn red!";
+    document.body.appendChild(actionMessage);
+}
+
+// Add this function to create the bomb message
+function createBombMessage() {
+    bombMessage = document.createElement('div');
+    bombMessage.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #ffff00;
+        font-family: Arial, sans-serif;
+        font-size: 24px;
+        text-align: center;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        z-index: 1000;
+        pointer-events: none;
+    `;
+    bombMessage.textContent = "Exhaust port exposed! Fire your proton torpedo when the planes meet!";
+    document.body.appendChild(bombMessage);
+}
+
+// Add this function to create a large explosion
+function createPortExplosion(position) {
+    const explosionGroup = new THREE.Group();
+    const particleCount = 150;
+    
+    // Create different particle types for more variety
+    const geometries = [
+        new THREE.SphereGeometry(0.15, 8, 8),
+        new THREE.BoxGeometry(0.2, 0.2, 0.2),
+        new THREE.TetrahedronGeometry(0.15)
+    ];
+
+    // Create different colors for a more dramatic effect
+    const colors = [
+        0xff4400, // Orange
+        0xff0000, // Red
+        0xffff00, // Yellow
+        0xffaa00  // Light orange
+    ];
+
+    // Add a smaller bright flash at the center FIRST (so it's behind other particles)
+    const flashGeometry = new THREE.SphereGeometry(1, 16, 16);
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 1
+    });
+    const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+    flash.userData.life = 1.0;
+    flash.userData.fadeRate = 0.05; // Faster fade rate for flash
+    flash.userData.velocity = new THREE.Vector3(0, 0, 0); // No movement for flash
+    explosionGroup.add(flash);
+
+    // Create colored particles
+    for (let i = 0; i < particleCount; i++) {
+        const geometry = geometries[Math.floor(Math.random() * geometries.length)];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
+        const material = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 1
+        });
+
+        const particle = new THREE.Mesh(geometry, material);
+        
+        particle.position.set(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2
+        );
+
+        particle.userData.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.3,
+            (Math.random() - 0.5) * 0.3,
+            (Math.random() - 0.5) * 0.3
+        );
+
+        particle.userData.rotationSpeed = new THREE.Vector3(
+            Math.random() * 0.1,
+            Math.random() * 0.1,
+            Math.random() * 0.1
+        );
+
+        particle.userData.life = 1.0;
+        particle.userData.fadeRate = 0.01 + Math.random() * 0.02;
+        explosionGroup.add(particle);
+    }
+    
+    explosionGroup.position.copy(position);
+    scene.add(explosionGroup);
+    explosionGroup.scale.multiplyScalar(2);
+    
+    return explosionGroup;
+}
+
+// Update the timer bar scale in your animation loop
+if (timerBar && missionPhase === 'exhaust') {
+    // Scale from left to right
+    const timeScale = Math.max(0, missionTimer / (30 * 60));
+    timerBar.scale.x = timeScale;
+}
+
+// Update the enemy destruction logic in your collision detection
+function handleEnemyDestruction(enemy) {
+    // ... existing destruction code ...
+    tiesFightersDestroyed++;
+}
+
+// Add new function for missed shot game over
+function createMissedShotGameOver() {
+    const overlay = document.createElement('div');
+    overlay.id = 'gameOverOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-family: 'Arial', sans-serif;
+        z-index: 1000;
+    `;
+
+    const accuracy = shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0;
+
+    overlay.innerHTML = `
+        <h1 style="font-size: 48px; margin-bottom: 20px; color: #ff0000;">MISSION FAILED</h1>
+        <div style="font-size: 24px; margin-bottom: 40px; text-align: center;">
+            <p>Your shot missed the exhaust port!</p>
+            <p>Wait for the planes to align before firing.</p>
+            <p style="margin-top: 20px;">Final Stats:</p>
+            <p>Score: ${score}</p>
+            <p>TIE Fighters Destroyed: ${tiesFightersDestroyed}</p>
+            <p>Accuracy: ${accuracy}%</p>
+        </div>
+        <button onclick="location.reload()" style="
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #ff0000;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        ">Try Again</button>
+    `;
+
+    document.body.appendChild(overlay);
+    gameActive = false;
+}
+
+function createVictoryScreen() {
+    const overlay = document.createElement('div');
+    overlay.id = 'gameOverOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-family: 'Arial', sans-serif;
+        z-index: 1000;
+    `;
+
+    const accuracy = shotsFired > 0 ? Math.round((shotsHit / shotsFired) * 100) : 0;
+
+    overlay.innerHTML = `
+        <h1 style="font-size: 48px; margin-bottom: 20px; color: #00ff00;">DEATH STAR DESTROYED!</h1>
+        <div style="font-size: 24px; margin-bottom: 40px; text-align: center;">
+            <p>Great shot, kid! That was one in a million!</p>
+            <p>Final Score: ${score}</p>
+            <p>TIE Fighters Destroyed: ${tiesFightersDestroyed}</p>
+            <p>Accuracy: ${accuracy}%</p>
+        </div>
+        <button onclick="location.reload()" style="
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #00ff00;
+            color: black;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        ">Play Again</button>
+    `;
+
+    document.body.appendChild(overlay);
+    gameActive = false;
+}
