@@ -137,6 +137,9 @@ function createNormalPhaseTimer() {
     timerContainer.add(normalPhaseTimerBar);
 }
 
+// Add this at the top with other variables
+let trenchScrollTime = 0;
+
 function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
@@ -173,7 +176,8 @@ function startGame() {
     createTimerBar();
     
     // Start the main game loop
-    requestAnimationFrame(animate);
+    lastTime = performance.now();
+    animate(lastTime);
 }
 
 function setupGame() {
@@ -248,18 +252,16 @@ function createTrench() {
             void main() {
                 float gridSize = 0.2;
                 float lineWidth = 0.008;
-                float baseSpeed = 0.2;
+                float baseSpeed = 0.3; // Reduced from 1.0 to 0.5 for slower movement
                 
                 vec2 uv = vUv;
                 if (isWall > 0.5) {
                     uv.x *= 2.0;
                     uv = vec2(uv.y, uv.x);
-                    // Offset to align with floor grid
                     uv += 0.5;
                     uv.y -= time * (baseSpeed * 2.0);
                 } else {
                     uv.x *= 1.0;
-                    // Offset to align with wall grid
                     uv += 0.5;
                     uv.y += time * baseSpeed;
                 }
@@ -1299,7 +1301,7 @@ function createJetStream() {
     return jet;
 }
 
-function animate() {
+function animate(currentTime) {
     if (!gameActive) {
         if (animationFrameId) {
             cancelAnimationFrame(animationFrameId);
@@ -1310,6 +1312,23 @@ function animate() {
     
     animationFrameId = requestAnimationFrame(animate);
     
+    // Calculate delta time in seconds
+    const deltaTime = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+
+    // Update trench scroll time
+    trenchScrollTime += deltaTime;
+    
+    // Update trench grid animation
+    if (trench) {
+        trench.children.forEach(child => {
+            if (child.material && child.material.uniforms) {
+                // Use actual time instead of incrementing by delta
+                child.material.uniforms.time.value = trenchScrollTime;
+            }
+        });
+    }
+
     // Update normal phase timer and spawn enemies
     if (missionPhase === 'normal' && normalPhaseTimer > 0) {
         // Update timer bar
@@ -1359,7 +1378,8 @@ function animate() {
             
             if (exhaustPorts.left && exhaustPorts.right) {
                 const portDistance = Math.abs(exhaustPorts.right.position.x - exhaustPorts.left.position.x);
-                if (portDistance <= 2) {
+                // Make the firing window smaller by reducing the distance check
+                if (portDistance <= 1.2) {  // Changed from 2.0 to 1.2
                     canFireExhaustShot = true;
                     exhaustPorts.left.material.uniforms.color.value.setHex(0xff0000);
                     exhaustPorts.right.material.uniforms.color.value.setHex(0xff0000);
@@ -1368,19 +1388,13 @@ function animate() {
                         actionMessage.style.color = "#ff0000";
                         actionMessage.style.fontSize = "32px";
                     }
+                } else {
+                    canFireExhaustShot = false;
+                    exhaustPorts.left.material.uniforms.color.value.setHex(0xffff00);
+                    exhaustPorts.right.material.uniforms.color.value.setHex(0xffff00);
                 }
             }
         }
-    }
-
-    // Update time for grid animation
-    time += 0.01;
-    if (trench) {
-        trench.children.forEach(child => {
-            if (child.material && child.material.uniforms) {
-                child.material.uniforms.time.value = time;
-            }
-        });
     }
 
     // Update game objects
@@ -1637,7 +1651,8 @@ function restartGame() {
     gameStarted = true;
 
     // Start a new animation loop
-    animate();
+    lastTime = performance.now();
+    animate(lastTime);
 
     normalPhaseTimer = 7200;  // Reset to 120 seconds
     if (normalPhaseTimerBar) {
@@ -2362,7 +2377,7 @@ function createPortExplosion(position) {
     ];
 
     // Create initial bright flash
-    const flashGeometry = new THREE.SphereGeometry(2, 32, 32);  // Bigger flash
+    const flashGeometry = new THREE.SphereGeometry(2, 45, 45);  // Bigger flash
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -2388,7 +2403,7 @@ function createPortExplosion(position) {
         const particle = new THREE.Mesh(geometry, material);
         
         // More spread in the particle positions
-        const spread = 3;
+        const spread = 3.5;
         particle.position.set(
             (Math.random() - 0.5) * spread,
             (Math.random() - 0.5) * spread,
