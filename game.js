@@ -2232,13 +2232,13 @@ function createExhaustPorts() {
     exhaustPorts.right.rotation.y = Math.PI / 2;
     player.add(exhaustPorts.right);
 
-    // Add a visible target point (exhaust port) closer
-    const targetGeometry = new THREE.RingGeometry(0.5, 0.8, 32);
+    // Update target ring to be more visible
+    const targetGeometry = new THREE.RingGeometry(0.8, 1.4, 40);  // Increased size
     const targetMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,  // Changed from 0xff0000 to 0xffffff
+        color: 0xffffff,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.8
+        opacity: 0.9  // Increased opacity
     });
     const targetRing = new THREE.Mesh(targetGeometry, targetMaterial);
     targetRing.position.set(0, 0.1, -60);
@@ -2246,11 +2246,34 @@ function createExhaustPorts() {
     scene.add(targetRing);
     exhaustPorts.target = targetRing;
 
-    // Add a dark hole inside the target ring
-    const holeGeometry = new THREE.CircleGeometry(0.5, 32);
+    // Add outer glow ring
+    const glowGeometry = new THREE.RingGeometry(1.0, 1.6, 32);  // Larger than target ring
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffff00,  // Yellow glow
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.4
+    });
+    const glowRing = new THREE.Mesh(glowGeometry, glowMaterial);
+    glowRing.position.copy(targetRing.position);
+    glowRing.rotation.x = -Math.PI / 2;
+    scene.add(glowRing);
+
+    // Add pulsing animation to the glow ring
+    function animateGlow() {
+        if (!gameActive) return;
+        glowRing.scale.setScalar(1 + Math.sin(Date.now() * 0.005) * 0.2);
+        requestAnimationFrame(animateGlow);
+    }
+    animateGlow();
+
+    // Add a larger dark hole inside the target ring
+    const holeGeometry = new THREE.CircleGeometry(0.8, 32);  // Increased size
     const holeMaterial = new THREE.MeshBasicMaterial({
         color: 0x000000,
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 1
     });
     const hole = new THREE.Mesh(holeGeometry, holeMaterial);
     hole.position.copy(targetRing.position);
@@ -2559,4 +2582,40 @@ function createVictoryScreen() {
 
     document.body.appendChild(overlay);
     gameActive = false;
+}
+
+function createExhaustPort() {
+    // Make the port larger and add a glowing ring
+    const portGeometry = new THREE.CylinderGeometry(3, 3, 2, 32);
+    const portMaterial = new THREE.MeshPhongMaterial({ 
+        color: 0xff0000,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.5
+    });
+    const port = new THREE.Mesh(portGeometry, portMaterial);
+    
+    // Add a glowing ring around the port
+    const ringGeometry = new THREE.TorusGeometry(4, 0.5, 16, 32);
+    const ringMaterial = new THREE.MeshPhongMaterial({
+        color: 0xff8800,
+        emissive: 0xff8800,
+        emissiveIntensity: 1,
+        transparent: true,
+        opacity: 0.7
+    });
+    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+    
+    // Add pulsing animation to the ring
+    function animateRing() {
+        ring.scale.set(
+            1 + Math.sin(Date.now() * 0.003) * 0.1,
+            1 + Math.sin(Date.now() * 0.003) * 0.1,
+            1
+        );
+        requestAnimationFrame(animateRing);
+    }
+    animateRing();
+    
+    port.add(ring);
+    return port;
 }
