@@ -62,7 +62,6 @@ let targetTiltX = 0; // Target roll (left/right tilt)
 let targetTiltZ = 0; // Target pitch (up/down tilt)
 let currentTiltX = 0;
 let currentTiltZ = 0;
-let missionTimer = 30 * 60; // 30 seconds at 60fps
 let missionPhase = 'normal'; // 'normal' or 'exhaust'
 let exhaustPortsActive = false;
 let exhaustPorts = { left: null, right: null, target: null, hole: null };
@@ -86,15 +85,9 @@ const MOBILE_BOUNDS = {
 };
 
 // Add these variables at the top with other globals
-let bombWindow = false;
-let bombWindowTimer = 0;
-const BOMB_WINDOW_DURATION = 100; // 100ms window to fire
 let bombMessage = null;
 
 // Add to global variables at top
-let bombSuccessful = false;
-
-// Add to global variables
 let cameraFollowingBomb = false;
 let bombToFollow = null;
 let originalCameraPos = null;
@@ -105,9 +98,6 @@ let bombingSequenceActive = false;
 
 // Add to global variables at top
 let distanceText = null;
-
-// Add TIE fighter count tracking
-const REQUIRED_TIE_FIGHTERS = 5;
 
 // Add new state variables at the top
 let exhaustInstructionsShown = false;
@@ -128,7 +118,6 @@ let normalPhaseTimerBar = null;
 
 // Add this variable at the top with other globals
 let hasShot = false;
-
 // Add this function to create the timer bar
 function createNormalPhaseTimer() {
     // Create container - make it wider
@@ -1296,6 +1285,20 @@ function createJetStream(position, parentObject) {
     };
 }
 
+// Add this function if it's missing
+function createJetStream() {
+    const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.5);
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.4
+    });
+    const jet = new THREE.Mesh(geometry, material);
+    jet.userData.life = 1.0;
+    jet.userData.velocity = new THREE.Vector3(0, 0, 0.5);
+    return jet;
+}
+
 function animate() {
     if (!gameActive) {
         if (animationFrameId) {
@@ -1312,8 +1315,8 @@ function animate() {
         // Update timer bar
         normalPhaseTimer--;
         if (normalPhaseTimerBar) {
-            normalPhaseTimerBar.scale.x = normalPhaseTimer / 7200;  // Updated from 600 to 7200
-            normalPhaseTimerBar.position.x = -8 * (1 - normalPhaseTimer / 7200);  // Updated from 600 to 7200
+            normalPhaseTimerBar.scale.x = normalPhaseTimer / 7200;
+            normalPhaseTimerBar.position.x = -8 * (1 - normalPhaseTimer / 7200);
         }
         
         // Spawn enemies during normal phase
@@ -1327,11 +1330,11 @@ function animate() {
             exhaustPortsActive = true;
             createExhaustPorts();
             createBombMessage();
-            // Stop enemy spawns when exhaust ports appear
-            enemies.forEach(enemy => scene.remove(enemy));
-            enemies = [];
-            enemyLasers.forEach(laser => scene.remove(laser));
-            enemyLasers = [];
+            // Remove this line that was clearing enemies
+            // enemies.forEach(enemy => scene.remove(enemy));
+            // enemies = [];
+            // enemyLasers.forEach(laser => scene.remove(laser));
+            // enemyLasers = [];
         }
     }
 
@@ -1424,7 +1427,7 @@ function animate() {
 
                     setTimeout(() => {
                         createVictoryScreen();
-                    }, 4000);
+                    }, 2000);  // Changed from 4000 to 2000 milliseconds
                 }, 1000);
             }
         }
@@ -1455,6 +1458,36 @@ function animate() {
             }
         }
     });
+
+    // Create new jet stream particles
+    if (gameActive && !playerExploding) {
+        const leftJet = createJetStream();
+        leftJet.position.copy(player.position);
+        leftJet.position.x -= 0.5;
+        leftJet.position.z += 0.8;
+        
+        const rightJet = createJetStream();
+        rightJet.position.copy(player.position);
+        rightJet.position.x += 0.5;
+        rightJet.position.z += 0.8;
+        
+        jetStreams.push(leftJet, rightJet);
+        scene.add(leftJet);
+        scene.add(rightJet);
+    }
+
+    // Update jet streams
+    for (let i = jetStreams.length - 1; i >= 0; i--) {
+        const jet = jetStreams[i];
+        jet.position.add(jet.userData.velocity);
+        jet.userData.life -= 0.1;
+        jet.material.opacity = jet.userData.life * 0.6;
+        
+        if (jet.userData.life <= 0) {
+            scene.remove(jet);
+            jetStreams.splice(i, 1);
+        }
+    }
 
     renderer.render(scene, camera);
 }
@@ -2285,25 +2318,28 @@ function createBombMessage() {
 // Add this function to create a large explosion
 function createPortExplosion(position) {
     const explosionGroup = new THREE.Group();
-    const particleCount = 150;
+    const particleCount = 300;  // Doubled from 150
     
     // Create different particle types for more variety
     const geometries = [
-        new THREE.SphereGeometry(0.15, 8, 8),
-        new THREE.BoxGeometry(0.2, 0.2, 0.2),
-        new THREE.TetrahedronGeometry(0.15)
+        new THREE.SphereGeometry(0.2, 8, 8),    // Bigger spheres
+        new THREE.BoxGeometry(0.3, 0.3, 0.3),   // Bigger boxes
+        new THREE.TetrahedronGeometry(0.25),     // Bigger tetrahedrons
+        new THREE.OctahedronGeometry(0.2)        // Added octahedrons for variety
     ];
 
-    // Create different colors for a more dramatic effect
+    // Enhanced colors for a more dramatic effect
     const colors = [
         0xff4400, // Orange
         0xff0000, // Red
         0xffff00, // Yellow
-        0xffaa00  // Light orange
+        0xffaa00, // Light orange
+        0xffffff, // White hot
+        0xff8800  // Bright orange
     ];
 
-    // Add a smaller bright flash at the center FIRST (so it's behind other particles)
-    const flashGeometry = new THREE.SphereGeometry(1, 16, 16);
+    // Create initial bright flash
+    const flashGeometry = new THREE.SphereGeometry(2, 32, 32);  // Bigger flash
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -2311,8 +2347,8 @@ function createPortExplosion(position) {
     });
     const flash = new THREE.Mesh(flashGeometry, flashMaterial);
     flash.userData.life = 1.0;
-    flash.userData.fadeRate = 0.05; // Faster fade rate for flash
-    flash.userData.velocity = new THREE.Vector3(0, 0, 0); // No movement for flash
+    flash.userData.fadeRate = 0.03;
+    flash.userData.velocity = new THREE.Vector3(0, 0, 0);
     explosionGroup.add(flash);
 
     // Create colored particles
@@ -2328,6 +2364,83 @@ function createPortExplosion(position) {
 
         const particle = new THREE.Mesh(geometry, material);
         
+        // More spread in the particle positions
+        const spread = 3;
+        particle.position.set(
+            (Math.random() - 0.5) * spread,
+            (Math.random() - 0.5) * spread,
+            (Math.random() - 0.5) * spread
+        );
+
+        // Faster particle velocities
+        particle.userData.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.5,
+            (Math.random() - 0.5) * 0.5,
+            (Math.random() - 0.5) * 0.5
+        );
+
+        // More rotation
+        particle.userData.rotationSpeed = new THREE.Vector3(
+            Math.random() * 0.2,
+            Math.random() * 0.2,
+            Math.random() * 0.2
+        );
+
+        particle.userData.life = 1.0;
+        particle.userData.fadeRate = 0.005 + Math.random() * 0.015; // Slower fade
+        explosionGroup.add(particle);
+    }
+    
+    explosionGroup.position.copy(position);
+    scene.add(explosionGroup);
+    explosionGroup.scale.multiplyScalar(3);  // Bigger overall scale
+    
+    // Create chain reaction of smaller explosions
+    setTimeout(() => {
+        for (let i = 0; i < 5; i++) {
+            setTimeout(() => {
+                const offset = new THREE.Vector3(
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 10
+                );
+                const secondaryPosition = position.clone().add(offset);
+                const secondaryExplosion = createSecondaryExplosion(secondaryPosition);
+                secondaryExplosion.scale.multiplyScalar(1.5 + Math.random());
+            }, i * 200);  // Stagger the secondary explosions
+        }
+    }, 500);  // Start chain reaction after initial explosion
+    
+    return explosionGroup;
+}
+
+// Add this new function for secondary explosions
+function createSecondaryExplosion(position) {
+    const explosionGroup = new THREE.Group();
+    const particleCount = 100;
+    
+    const geometries = [
+        new THREE.SphereGeometry(0.15, 8, 8),
+        new THREE.BoxGeometry(0.2, 0.2, 0.2)
+    ];
+
+    const colors = [
+        0xff4400,
+        0xff0000,
+        0xffff00
+    ];
+
+    for (let i = 0; i < particleCount; i++) {
+        const geometry = geometries[Math.floor(Math.random() * geometries.length)];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
+        const material = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 1
+        });
+
+        const particle = new THREE.Mesh(geometry, material);
         particle.position.set(
             (Math.random() - 0.5) * 2,
             (Math.random() - 0.5) * 2,
@@ -2335,40 +2448,26 @@ function createPortExplosion(position) {
         );
 
         particle.userData.velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.3
+            (Math.random() - 0.5) * 0.4,
+            (Math.random() - 0.5) * 0.4,
+            (Math.random() - 0.5) * 0.4
         );
 
         particle.userData.rotationSpeed = new THREE.Vector3(
-            Math.random() * 0.1,
-            Math.random() * 0.1,
-            Math.random() * 0.1
+            Math.random() * 0.15,
+            Math.random() * 0.15,
+            Math.random() * 0.15
         );
 
         particle.userData.life = 1.0;
-        particle.userData.fadeRate = 0.01 + Math.random() * 0.02;
+        particle.userData.fadeRate = 0.02 + Math.random() * 0.02;
         explosionGroup.add(particle);
     }
     
     explosionGroup.position.copy(position);
     scene.add(explosionGroup);
-    explosionGroup.scale.multiplyScalar(2);
     
     return explosionGroup;
-}
-
-// Update the timer bar scale in your animation loop
-if (timerBar && missionPhase === 'exhaust') {
-    // Scale from left to right
-    const timeScale = Math.max(0, missionTimer / (30 * 60));
-    timerBar.scale.x = timeScale;
-}
-
-// Update the enemy destruction logic in your collision detection
-function handleEnemyDestruction(enemy) {
-    // ... existing destruction code ...
-    tiesFightersDestroyed++;
 }
 
 // Add new function for missed shot game over
